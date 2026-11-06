@@ -150,7 +150,7 @@ export function Bars({
   return (
     <>
       <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={rows} margin={{ top: 4, right: 4, bottom: 0, left: 4 }} barGap={2} barCategoryGap={stacked ? '22%' : '18%'}>
+        <BarChart data={rows} margin={{ top: 4, right: 4, bottom: 0, left: 4 }} stackOffset="sign" barGap={2} barCategoryGap={stacked ? '22%' : '18%'}>
           <CartesianGrid vertical={false} stroke="var(--color-grid)" />
           <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={8} />
           <YAxis tick={axis} tickLine={false} axisLine={false} tickFormatter={f.compact} width={72} />

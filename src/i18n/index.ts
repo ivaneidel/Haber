@@ -14,8 +14,8 @@ function initialLang(): Lang {
   } catch {
     /* private mode */
   }
-  // Built for an Argentine user: Spanish unless the browser clearly prefers English.
-  return typeof navigator !== 'undefined' && navigator.language?.startsWith('en') ? 'en' : 'es'
+  // Built for an Argentine user: Spanish by default; English is a choice in Ajustes.
+  return 'es'
 }
 
 i18n.use(initReactI18next).init({

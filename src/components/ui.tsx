@@ -410,7 +410,7 @@ export function Note({ children, tone = 'info', className }: { children: ReactNo
 export function Table({ head, children, className }: { head: ReactNode; children: ReactNode; className?: string }) {
   return (
     <div className={clsx('-mx-4 overflow-x-auto px-4', className)}>
-      <table className="w-full min-w-max border-collapse text-sm">
+      <table className="w-full border-collapse text-sm">
         <thead className="text-left text-xs text-ink-500 dark:text-ink-400">{head}</thead>
         <tbody className="tnum [&>tr]:border-t [&>tr]:border-ink-100 dark:[&>tr]:border-ink-800">{children}</tbody>
       </table>

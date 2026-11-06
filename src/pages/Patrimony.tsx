@@ -252,14 +252,8 @@ export default function Patrimony() {
 function Ledger({ events, onEdit }: { events: ReturnType<typeof capitalEvents>; onEdit: (id: string) => void }) {
   const { t, i18n } = useTranslation()
   const [cur, setCur] = useState<Currency>(events.some((e) => e.currency === 'USD') ? 'USD' : 'ARS')
-  let bal = 0
-  const rows = events
-    .filter((e) => e.currency === cur)
-    .map((e) => {
-      bal += e.amount
-      return { ...e, bal }
-    })
-    .reverse()
+  const mine = events.filter((e) => e.currency === cur)
+  const rows = mine.map((e, i) => ({ ...e, bal: mine.slice(0, i + 1).reduce((s, x) => s + x.amount, 0) })).reverse()
   return (
     <>
       <div className="mb-2">

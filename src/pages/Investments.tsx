@@ -139,7 +139,7 @@ export default function Investments() {
                   <th className="py-2 pr-2 font-medium">{t('inv.name')}</th>
                   <th className="px-2 py-2 text-right font-medium">{t('inv.capital')}</th>
                   <th className="px-2 py-2 font-medium">{t('inv.dates')}</th>
-                  <th className="px-2 py-2 text-right font-medium">{t('inv.rate')}</th>
+                  <th className="px-2 py-2 text-right font-medium">{t('xl.rate')}</th>
                   <th className="px-2 py-2 text-right font-medium">{t('inv.yieldsReceived')}</th>
                   <th className="px-2 py-2 font-medium">{t('inv.status')}</th>
                   <th />

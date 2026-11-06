@@ -8,7 +8,7 @@ import { Amt, FxCaption, Kpi, ViewSwitch } from '../components/money'
 import { Button, Card, Empty, PageHeader, SectionTitle, Segmented, Select, Toggle } from '../components/ui'
 import { useModel } from '../hooks/useData'
 import { commitments, filterFlows, pendingCuotas, pendingRecurring, recurringMonthly, totals } from '../lib/calc'
-import { addMonths, monthLabel, thisMonth, today } from '../lib/dates'
+import { monthLabel, thisMonth, today } from '../lib/dates'
 import { formatMoney, makeLens, type Lens } from '../lib/money'
 import type { Currency, Plan, Recurring } from '../lib/types'
 import { MovementList, movementRows } from './Movements'
@@ -39,7 +39,7 @@ export default function Expenses() {
   // Future obligations (next 12 months).
   const chartLens: Lens = lenses.length === 1 ? lenses[0] : makeLens(splitCur, false, model.book, prefs.fx)
   const scopedData = propertyId ? { ...data, plans: byProp(data.plans), recurring: byProp(data.recurring) } : data
-  const com = commitments(scopedData, addMonths(m, 1), 12, chartLens, includeFixed)
+  const com = commitments(scopedData, m, 12, chartLens, includeFixed)
   const comRows: Row[] = com.map((c) => ({ label: monthLabel(c.month, i18n.language, 'short'), installment: c.installment, fixed: c.fixed }))
   const comSeries: SeriesDef[] = [{ key: 'installment', label: t('kind.installment'), color: C.installment }, ...(includeFixed ? [{ key: 'fixed', label: t('kind.fixed'), color: C.fixed }] : [])]
   const fmt = (n: number) => formatMoney(n, chartLens.target, i18n.language)

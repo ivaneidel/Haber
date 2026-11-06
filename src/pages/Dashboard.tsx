@@ -226,7 +226,8 @@ function ChartsBlock({ model, year, flows, years, propertyScoped }: { model: Mod
     { key: 'eventual', label: t('kind.eventual'), color: C.eventual },
   ]
   const toRow = (x: Totals, label: string): Row => ({ label, ...(x as unknown as Record<string, number>) })
-  const incomeRows = mt.map((x) => toRow(x, ml(x.month)))
+  // Months that haven't happened yet are blank, not zero.
+  const incomeRows = mt.map((x) => (x.month > thisMonth() ? { label: ml(x.month) } : toRow(x, ml(x.month))))
   const yearRows = yt.map((x) => toRow(x, String(x.year)))
   const netSeries: SeriesDef[] = [
     { key: 'rent', label: t('src.rent'), color: C.rent },
@@ -234,7 +235,7 @@ function ChartsBlock({ model, year, flows, years, propertyScoped }: { model: Mod
     { key: 'realEstateNet', label: t('dash.realEstateNet'), color: C.net },
   ]
   const cmpKey = propertyScoped ? 'realEstateNet' : 'income'
-  const cmpRows: Row[] = months.map((m, i) => ({ label: ml(m), cur: mt[i][cmpKey], prev: prev[i][cmpKey] }))
+  const cmpRows: Row[] = months.map((m, i) => ({ label: ml(m), cur: m > thisMonth() ? null : mt[i][cmpKey], prev: prev[i][cmpKey] }))
   const cmpSeries: SeriesDef[] = [
     { key: 'prev', label: String(year - 1), color: C.prev },
     { key: 'cur', label: String(year), color: C.rent },

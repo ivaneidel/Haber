@@ -137,7 +137,7 @@ export function MovementList({ rows, showProperty = true }: { rows: MoveRow[]; s
               <th className="px-2 py-2 font-medium">{t('mov.detail')}</th>
               <th className="px-2 py-2 font-medium">{t('mov.period')}</th>
               <th className="px-2 py-2 text-right font-medium">{t('form.amount')}</th>
-              <th className="px-2 py-2 font-medium">{t('form.method')}</th>
+              <th className="px-2 py-2 font-medium">{t('xl.method')}</th>
               <th className="w-28" />
             </tr>
           </thead>
@@ -263,7 +263,7 @@ export default function Movements() {
         }
       />
       <Card>
-        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
           <div className="relative sm:col-span-2">
             <Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-400" />
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('mov.search')} className="pl-9" />
@@ -284,7 +284,7 @@ export default function Movements() {
               </option>
             ))}
           </Select>
-          <div className="flex gap-2">
+          <div className="flex gap-2 lg:col-span-2">
             <Select value={year} onChange={(e) => setParam('anio', e.target.value)} aria-label={t('common.year')}>
               <option value="">{t('mov.allYears')}</option>
               {years.map((y) => (
