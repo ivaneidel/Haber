@@ -1,0 +1,156 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Neutral gray shell (`ink`) with one accent (`brand`, a deep teal) for actions.
+ * Series colours come from the validated dataviz reference palette, stacked in this order
+ * (rent, sale, yield, pension, other) so no adjacent pair falls below the CVD/normal floors.
+ * Every chart also has a legend and a table view, since some light-mode slots are < 3:1.
+ */
+@theme {
+  --color-ink-50: #f6f6f3;
+  --color-ink-100: #ecece7;
+  --color-ink-200: #dcdcd5;
+  --color-ink-300: #c2c2b8;
+  --color-ink-400: #98988d;
+  --color-ink-500: #727269;
+  --color-ink-600: #55554e;
+  --color-ink-700: #3c3c37;
+  --color-ink-800: #26272a;
+  --color-ink-900: #1a1b1e;
+  --color-ink-950: #111315;
+
+  --color-brand-50: #ecf6f5;
+  --color-brand-100: #d0ebe8;
+  --color-brand-300: #7cc6bd;
+  --color-brand-400: #3fa89c;
+  --color-brand-500: #1b8a7e;
+  --color-brand-600: #136f66;
+  --color-brand-700: #105a53;
+
+  --color-pos: #1f7a4d;
+  --color-neg: #c03a3a;
+
+  --color-s-rent: #2a78d6;
+  --color-s-sale: #eb6834;
+  --color-s-yield: #1baf7a;
+  --color-s-pension: #eda100;
+  --color-s-other: #6250d6;
+  --color-s-fixed: #6250d6;
+  --color-s-installment: #e87ba4;
+  --color-s-eventual: #008300;
+  --color-s-net: #1a1b1e;
+  --color-grid: #e4e4de;
+  --color-surface: #ffffff;
+}
+
+html.dark {
+  --color-s-rent: #3987e5;
+  --color-s-sale: #d95926;
+  --color-s-yield: #199e70;
+  --color-s-pension: #c98500;
+  --color-s-other: #9085e9;
+  --color-s-fixed: #9085e9;
+  --color-s-installment: #d55181;
+  --color-s-eventual: #008300;
+  --color-s-net: #ecece7;
+  --color-pos: #4fb27f;
+  --color-neg: #e66767;
+  --color-grid: #2c2d31;
+  --color-surface: #1a1b1e;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink-50);
+  color: var(--color-ink-900);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html.dark body {
+  background: var(--color-ink-950);
+  color: var(--color-ink-100);
+}
+
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+@media (min-width: 1024px) {
+  input,
+  textarea,
+  select {
+    font-size: 14px;
+  }
+}
+
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+.recharts-wrapper:focus,
+.recharts-surface:focus,
+.recharts-sector:focus,
+.recharts-rectangle:focus {
+  outline: none;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .page-in {
+    animation: page-in 160ms ease-out;
+  }
+  .sheet-in {
+    animation: sheet-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media print {
+  aside,
+  header,
+  .no-print {
+    display: none !important;
+  }
+}
