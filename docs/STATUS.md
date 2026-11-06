@@ -20,8 +20,8 @@ they differ), `02-architecture.md`.
   bottom-sheet loader). No console errors.
 
 ## Not done / next
-- Not deployed. Iván will deploy to a new GitHub Pages repo: `npm run build`, publish `dist/`. Works under any
-  sub-path (relative base + HashRouter).
+- Not deployed yet. `.github/workflows/deploy.yml` deploys to GitHub Pages on push to `main` (tests → build →
+  `deploy-pages`). One-time: repo Settings → Pages → Source: GitHub Actions. Works under any sub-path.
 - Not tried on a real phone or in Safari/Firefox desktop (month pickers are plain selects for that reason).
 - Main JS chunk ~315 KB gzipped (Recharts + app). Fine for a local app; lazy-load pages if it matters.
 - Ideas if she asks: rent increase reminders by contract index, CSV import, attachments (receipts), Firestore backend.
