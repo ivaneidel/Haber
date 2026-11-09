@@ -26,8 +26,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Haber — ingresos y patrimonio',
-        short_name: 'Haber',
+        name: 'Nuestros ingresos',
+        short_name: 'Ingresos',
         description: 'Ingresos, gastos de propiedades, inversiones y patrimonio. Los datos quedan en este dispositivo.',
         lang: 'es',
         theme_color: '#136f66',

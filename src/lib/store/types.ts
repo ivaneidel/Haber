@@ -1,4 +1,6 @@
 import type {
+  Bill,
+  StatusChange,
   CapitalMove,
   Expense,
   Income,
@@ -40,6 +42,8 @@ export interface Tables {
   pensions: Pension
   rates: Rate
   settings: Setting
+  bills: Bill
+  statusLog: StatusChange
 }
 
 export type TableName = keyof Tables
@@ -60,6 +64,8 @@ export const TABLES: TableName[] = [
   'pensions',
   'rates',
   'settings',
+  'bills',
+  'statusLog',
 ]
 
 export type Snapshot = { [T in TableName]: Tables[T][] }

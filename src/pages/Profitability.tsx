@@ -7,7 +7,7 @@ import { Badge, Card, Empty, Note, PageHeader, Select, Table, td, tdNum, th, thN
 import { useModel, type Model } from '../hooks/useData'
 import { dataYears, propertyYield, valuationForYear, type YieldRow } from '../lib/calc'
 import { today } from '../lib/dates'
-import { formatPct } from '../lib/money'
+import { formatMoney, formatPct } from '../lib/money'
 
 /** Whole portfolio in USD: net rent over total value, both converted. */
 function portfolio(model: Model, year: number, rows: YieldRow[]) {
@@ -17,6 +17,7 @@ function portfolio(model: Model, year: number, rows: YieldRow[]) {
   let value = 0
   let gross = 0
   let expenses = 0
+  let vacancyCost = 0
   for (const r of rows) {
     const v = valuationForYear(model.data, r.property.id, year)
     if (!v) continue
@@ -24,9 +25,10 @@ function portfolio(model: Model, year: number, rows: YieldRow[]) {
     net += y.net
     gross += y.gross
     expenses += y.expenses
+    vacancyCost += y.vacancyCost
     value += usd(v.v.value, v.v.currency, end)
   }
-  return { net, value, gross, expenses, pct: value ? (net / value) * 100 : null }
+  return { net, value, gross, expenses, vacancyCost, pct: value ? (net / value) * 100 : null }
 }
 
 export default function Profitability() {
@@ -79,14 +81,27 @@ export default function Profitability() {
         </Card>
       ) : (
         <>
-          <Card>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {active.map((r) => (
+              <PlainCard key={r.property.id} r={r} partial={partial} />
+            ))}
+          </div>
+
+          <Card className="mt-4">
+            <h3 className="mb-2 font-semibold">{t('profit.detailTitle')}</h3>
             <Table
               head={
                 <tr>
                   <th className={th}>{t('form.property')}</th>
                   <th className={thNum}>{t('profit.gross')}</th>
-                  <th className={thNum}>{t('profit.expenses')}</th>
+                  <th className={thNum}>{t('kind.fixed')}</th>
+                  <th className={thNum}>{t('kind.installment')}</th>
+                  <th className={thNum}>{t('kind.eventual')}</th>
+                  <th className={thNum}>{t('kind.fee')}</th>
                   <th className={thNum}>{t('profit.net')}</th>
+                  <th className={thNum}>{t('profit.monthsRented')}</th>
+                  <th className={thNum}>{t('profit.monthsVacant')}</th>
+                  <th className={thNum}>{t('profit.vacancyCost')}</th>
                   <th className={thNum}>{t('profit.value')}</th>
                   <th className={thNum}>{t('profit.pct')}</th>
                   <th className={thNum + ' border-l border-ink-100 dark:border-ink-800'}>{t('profit.appreciation')}</th>
@@ -105,11 +120,23 @@ export default function Profitability() {
                     <Amt value={r.gross} cur={r.currency} />
                   </td>
                   <td className={tdNum}>
-                    <Amt value={r.expenses} cur={r.currency} />
+                    <Amt value={r.fixed} cur={r.currency} />
+                  </td>
+                  <td className={tdNum}>
+                    <Amt value={r.installment} cur={r.currency} />
+                  </td>
+                  <td className={tdNum}>
+                    <Amt value={r.eventual} cur={r.currency} />
+                  </td>
+                  <td className={tdNum}>
+                    <Amt value={r.fee} cur={r.currency} />
                   </td>
                   <td className={tdNum}>
                     <Amt value={r.net} cur={r.currency} tone className="font-medium" />
                   </td>
+                  <td className={tdNum}>{months(r.monthsRented, i18n.language)}</td>
+                  <td className={tdNum}>{months(r.monthsVacant, i18n.language)}</td>
+                  <td className={tdNum}>{r.vacancyCost ? <Amt value={r.vacancyCost} cur={r.currency} /> : '—'}</td>
                   <td className={tdNum}>
                     {r.value ? <Amt value={r.value} cur={r.currency} /> : <Link to={`/propiedades/${r.property.id}`} className="text-amber-700 underline dark:text-amber-300">{t('profit.addValue')}</Link>}
                     {r.approx && <div className="text-[11px] text-ink-400">{t('profit.approx')}</div>}
@@ -132,12 +159,14 @@ export default function Profitability() {
                 <td className={tdNum}>
                   <Amt value={port.gross} cur="USD" />
                 </td>
-                <td className={tdNum}>
+                <td className={tdNum} colSpan={4}>
                   <Amt value={port.expenses} cur="USD" />
                 </td>
                 <td className={tdNum}>
                   <Amt value={port.net} cur="USD" tone />
                 </td>
+                <td colSpan={2} />
+                <td className={tdNum}>{port.vacancyCost ? <Amt value={port.vacancyCost} cur="USD" /> : '—'}</td>
                 <td className={tdNum}>
                   <Amt value={port.value} cur="USD" />
                 </td>
@@ -145,7 +174,8 @@ export default function Profitability() {
                 <td className="border-l border-ink-100 dark:border-ink-800" />
               </tr>
             </Table>
-            <p className="mt-3 text-xs text-ink-500">{t('profit.appreciationNote')}</p>
+            <p className="mt-3 text-xs text-ink-500">{t('profit.monthsNote')}</p>
+            <p className="mt-1 text-xs text-ink-500">{t('profit.appreciationNote')}</p>
           </Card>
 
           <div className="mt-4 grid gap-4 xl:grid-cols-2">
@@ -187,3 +217,28 @@ function PctBars({ rows }: { rows: Row[] }) {
   )
 }
 
+
+const months = (n: number | null, lang: string) => (n === null ? '—' : n.toLocaleString(lang.startsWith('en') ? 'en-US' : 'es-AR', { maximumFractionDigits: 1 }))
+
+/** The same numbers, said in words (spec 2 §11: no financial jargon). */
+function PlainCard({ r, partial }: { r: YieldRow; partial: boolean }) {
+  const { t, i18n } = useTranslation()
+  const m = (n: number) => formatMoney(n, r.currency, i18n.language)
+  return (
+    <Card>
+      <Link to={`/propiedades/${r.property.id}`} className="font-semibold hover:underline">
+        {r.property.name}
+      </Link>
+      <p className="mt-1 text-sm text-ink-700 dark:text-ink-200">
+        {t(partial ? 'plain.collectedSoFar' : 'plain.collected', { year: r.year, gross: m(r.gross), expenses: m(r.expenses) })}{' '}
+        <strong className={r.net >= 0 ? 'text-pos' : 'text-neg'}>{t(r.net >= 0 ? 'plain.left' : 'plain.lost', { net: m(Math.abs(r.net)) })}</strong>
+      </p>
+      {r.pct !== null && r.value ? (
+        <p className="mt-1 text-sm text-ink-600 dark:text-ink-300">{t('plain.pct', { pct: formatPct(r.pct, i18n.language, 1), value: m(r.value), per100: m(r.pct) })}</p>
+      ) : (
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">{t('profit.noValue')}</p>
+      )}
+      {!!r.monthsVacant && r.monthsVacant > 0 && <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">{t('plain.vacant', { months: months(r.monthsVacant, i18n.language), cost: m(r.vacancyCost) })}</p>}
+    </Card>
+  )
+}

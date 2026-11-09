@@ -22,9 +22,12 @@ import EntryHost from './components/EntryForm'
 import { openEntry } from './components/entryStore'
 import { ToastHost } from './components/toast'
 import { Button, IconButton } from './components/ui'
-import { useSetting, useSnapshot } from './hooks/useData'
+import { useModel, useSetting, useSnapshot } from './hooks/useData'
+import { useDue } from './components/Due'
+import { urgentItems } from './lib/calc'
 import { requestPersistence, setSetting, wipeAll } from './lib/repo'
 import { seedFirstRun } from './lib/seed'
+import { migratePrefs } from './lib/prefs'
 import Dashboard from './pages/Dashboard'
 import Movements from './pages/Movements'
 import Properties from './pages/Properties'
@@ -51,6 +54,7 @@ const NAV = [
 
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation()
+  const urgent = urgentItems(useDue(useModel())).length
   const link = ({ isActive }: { isActive: boolean }) =>
     clsx(
       'flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors',
@@ -64,6 +68,11 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
         <NavLink key={to} to={to} end={'end' in rest} className={link} onClick={onNavigate}>
           <Icon size={18} />
           {t(`nav.${key}`)}
+          {key === 'expenses' && urgent > 0 && (
+            <span className="ml-auto rounded-full bg-red-600 px-1.5 text-[11px] font-semibold text-white" title={t('due.bannerTitle')}>
+              {urgent}
+            </span>
+          )}
         </NavLink>
       ))}
       <div className="my-2 border-t border-ink-200 dark:border-ink-800" />
@@ -79,7 +88,7 @@ function Brand() {
   return (
     <div className="flex items-center gap-2 font-bold tracking-tight">
       <img src="./favicon.svg" alt="" className="h-7 w-7" />
-      <span className="text-lg">Haber</span>
+      <span className="text-lg">Nuestros ingresos</span>
     </div>
   )
 }
@@ -94,6 +103,7 @@ export default function App() {
 
   useEffect(() => {
     seedFirstRun()
+      .then(migratePrefs)
       .catch((e) => console.error('seed failed', e))
       .finally(() => setReady(true))
     void requestPersistence()

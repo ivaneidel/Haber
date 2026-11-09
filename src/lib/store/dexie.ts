@@ -28,6 +28,11 @@ class HaberDB extends Dexie {
       rates: 'id, date',
       settings: 'id',
     })
+    // v2 (functional set 2): received bills and property status history. Additive only.
+    this.version(2).stores({
+      bills: 'id, recurringId',
+      statusLog: 'id, propertyId',
+    })
   }
 }
 

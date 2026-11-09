@@ -1,9 +1,12 @@
 # STATUS
 
-_Last updated: 2026-11-06_
+_Last updated: 2026-11-09_
 
 Cold start: read `00-requirements-es.md` (scope), `01-decisions.md` (interpretations — overrides the spec where
-they differ), `02-architecture.md`.
+they differ), `02-architecture.md`, then `03-requirements-2-es.md` + `04-functional-set-2.md` (second spec and
+its decisions — override the earlier ones).
+
+Visible name: **Nuestros ingresos**. Code/repo/DB name: **Haber** (never rename the DB).
 
 ## Done — all three spec stages
 
@@ -19,12 +22,32 @@ they differ), `02-architecture.md`.
   investment close + renew, live FX import (2 502 MEP quotes), light mode, phone width (390px: header, drawer,
   bottom-sheet loader). No console errors.
 
+## Done — functional set 2 (2026-11-09)
+
+| Spec 2 § | What | Where |
+|---|---|---|
+| 2 | Property sheet: cadastre, parcel, postal code, status | Property form + page "Ficha" |
+| 3 | Services/taxes = templates with provider, account no., due day, payment method, bill channel + email/portal/link. Received bills (`bills` table) per period. Status derived: awaiting / received / due in N days / today / overdue / paid. PagoMisCuentas added (one-time prefs migration). | Gastos → Vencimientos, BillForm, AccountCard |
+| 3 reminders | **Banner at the top of the Tablero** (overdue/today red, ≤3 days amber) + red badge on Gastos. No push (Iván's call). | `components/Due.tsx` |
+| 4 | "Carga del mes" (rows proposed, unchecked, confirm), "Repetir el último" in the loader, rent amount suggested from usual net minus pending deductions, last bill amount as tap-to-use reference | Tablero, loader |
+| 5 | Works: work date, materials/labor/other (mixed, never double), managed by, paid by, deducted from a rent liquidation; rent fee (honorarios); pending deductions card | Loader, Gastos, Movimientos |
+| 6 | Status history (`statusLog`), vacancy periods with days and cost | Property page |
+| 7 | Rentabilidad: fixed/cuotas/eventual/fees, months rented/vacant, vacancy cost, plain-language card per property | Rentabilidad |
+| 11 | KPIs with one-line plain explanations, Resultado neto, rents KPI, fees in breakdown | Tablero |
+
+- 42 tests (11 new in `set2.test.ts`: no double counting, due urgency, vacancy months, **v1→v2 DB upgrade keeps rows**).
+- Browser-checked with demo data (Easy Browser): banner, Gastos/Vencimientos, rent with fee + deduction linking,
+  works breakdown validation, Carga del mes save, Local Centro vacancy, Rentabilidad. No console errors.
+  Phone width only checked empty (390px layout OK).
+
 ## Not done / next
 - Not deployed yet. `.github/workflows/deploy.yml` deploys to GitHub Pages on push to `main` (tests → build →
   `deploy-pages`). One-time: repo Settings → Pages → Source: GitHub Actions. Works under any sub-path.
 - Not tried on a real phone or in Safari/Firefox desktop (month pickers are plain selects for that reason).
 - Main JS chunk ~315 KB gzipped (Recharts + app). Fine for a local app; lazy-load pages if it matters.
 - Ideas if she asks: rent increase reminders by contract index, CSV import, attachments (receipts), Firestore backend.
+- Reminders with the app closed: not built (no push wanted). Free option if ever needed: .ics calendar export of due days.
+- Link to the separate expenses app (spec 2 §1): not integrated; property costs live here.
 
 ## Known traps
 - Data is real and personal once she starts: schema changes must be ADDITIVE (new Dexie `version(n)`), and

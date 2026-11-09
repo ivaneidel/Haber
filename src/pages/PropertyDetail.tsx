@@ -1,19 +1,20 @@
-import { Archive, ArchiveRestore, ArrowLeft, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, ExternalLink, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Bars, C, ChartCard, type Row, type SeriesDef } from '../components/Charts'
 import { openEntry } from '../components/entryStore'
-import { PlanForm, PropertyForm, RecurringForm, ValuationForm } from '../components/forms'
+import { PlanForm, PropertyForm, RecurringForm, StatusForm, ValuationForm } from '../components/forms'
 import { Amt, FxCaption, Kpi, Multi, ViewSwitch } from '../components/money'
 import { toast } from '../components/toast'
 import { Badge, Button, Card, Empty, IconButton, PageHeader, SectionTitle, Segmented, Select, Table, confirmAction, td, tdNum, th, thNum } from '../components/ui'
 import { useModel } from '../hooks/useData'
-import { dataYears, filterFlows, monthlyTotals, planStatus, propertyYield, totals, valuationsOf, yearlyTotals, type Flow } from '../lib/calc'
+import { currentStatus, dataYears, filterFlows, monthlyTotals, pendingDeductions, planStatus, propertyYield, statusHistory, totals, vacancyPeriods, valuationsOf, yearlyTotals, type Flow } from '../lib/calc'
 import { dateLabel, monthLabel, today, yearMonths } from '../lib/dates'
 import { formatMoney, formatPct, type Lens } from '../lib/money'
 import { apply, deletePlan, deletePropertyHard, propertyRefs, putOp, remove } from '../lib/repo'
-import type { Currency, Plan, Recurring, Valuation } from '../lib/types'
+import type { Currency, Plan, Property, PropertyStatus, Recurring, StatusChange, Valuation } from '../lib/types'
+import type { Model } from '../hooks/useData'
 import { MovementList, movementRows } from './Movements'
 import { contractBadge } from './Properties'
 
@@ -30,6 +31,7 @@ export default function PropertyDetail() {
   const [rec, setRec] = useState<Recurring | 'new' | null>(null)
   const [plan, setPlan] = useState<Plan | 'new' | null>(null)
   const [splitCur, setSplitCur] = useState<Currency>('ARS')
+  const [statusEdit, setStatusEdit] = useState<StatusChange | 'new' | null>(null)
   if (!model) return null
   const { data, flows, lenses, prefs } = model
   const p = data.properties.find((x) => x.id === id)
@@ -77,7 +79,7 @@ export default function PropertyDetail() {
       <PageHeader
         title={
           <span className="flex flex-wrap items-center gap-2">
-            {p.name} {contractBadge(p, t)}
+            {p.name} <StatusBadge status={currentStatus(data, p)} /> {contractBadge(p, t)}
           </span>
         }
         subtitle={[p.address, p.city, p.province].filter(Boolean).join(', ')}
@@ -114,6 +116,12 @@ export default function PropertyDetail() {
             <Info label={t('property.contractStart')} value={dateLabel(p.contractStart, i18n.language)} />
             <Info label={t('property.contractEnd')} value={dateLabel(p.contractEnd, i18n.language)} />
             <Info label={t('property.refRent')} value={p.refRent ? formatMoney(p.refRent, p.refRentCurrency, i18n.language) : ''} />
+          </dl>
+          <SectionTitle className="mt-4">{t('property.sheet')}</SectionTitle>
+          <dl className="space-y-1.5 text-sm">
+            <Info label={t('property.address')} value={[p.address, p.city, p.province, p.postalCode].filter(Boolean).join(', ')} />
+            <Info label={t('property.cadastre')} value={p.cadastre} mono />
+            <Info label={t('property.parcel')} value={p.parcel} mono />
           </dl>
           {p.contractNotes && <p className="mt-2 text-sm whitespace-pre-wrap text-ink-600 dark:text-ink-300">{p.contractNotes}</p>}
           {p.notes && <p className="mt-2 text-sm whitespace-pre-wrap text-ink-500">{p.notes}</p>}
@@ -162,6 +170,14 @@ export default function PropertyDetail() {
           <p className="mt-2 text-xs text-ink-500">{t('property.valueHistoryNote')}</p>
         </Card>
       </div>
+
+      <StatusCard model={model} property={p} onEdit={setStatusEdit} />
+
+      {pendingDeductions(data, p.id).length > 0 && (
+        <Card className="mt-4 border-amber-300 dark:border-amber-800">
+          <p className="text-sm">{t('work.pendingOnProperty', { count: pendingDeductions(data, p.id).length })}</p>
+        </Card>
+      )}
 
       <div className="mt-6 mb-3 flex flex-wrap items-center gap-2">
         <h2 className="mr-auto text-lg font-semibold">{t('property.result')}</h2>
@@ -219,7 +235,7 @@ export default function PropertyDetail() {
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
         <Card>
-          <SectionTitle action={<Button size="sm" onClick={() => setRec('new')}><Plus size={14} />{t('fixed.new')}</Button>}>{t('kind.fixed')}</SectionTitle>
+          <SectionTitle action={<Button size="sm" onClick={() => setRec('new')}><Plus size={14} />{t('fixed.new')}</Button>}>{t('exp.tabServices')}</SectionTitle>
           <RecurringList recs={data.recurring.filter((r) => r.propertyId === p.id)} onEdit={setRec} />
         </Card>
         <Card>
@@ -235,6 +251,7 @@ export default function PropertyDetail() {
         <MovementList rows={movementRows(data, t).filter((r) => r.propertyId === p.id).slice(0, 15)} showProperty={false} />
       </Card>
 
+      {statusEdit && <StatusForm propertyId={p.id} change={statusEdit === 'new' ? undefined : statusEdit} onClose={() => setStatusEdit(null)} />}
       {edit && <PropertyForm data={data} property={p} onClose={() => setEdit(false)} />}
       {val && <ValuationForm propertyId={p.id} valuation={val === 'new' ? undefined : val} onClose={() => setVal(null)} />}
       {rec && <RecurringForm data={data} prefs={prefs} rec={rec === 'new' ? undefined : rec} propertyId={p.id} onClose={() => setRec(null)} />}
@@ -245,11 +262,11 @@ export default function PropertyDetail() {
 
 const sum = (fl: Flow[], l: Lens) => totals(fl, l)
 
-function Info({ label, value }: { label: string; value?: string }) {
+function Info({ label, value, mono }: { label: string; value?: string; mono?: boolean }) {
   return (
     <div className="flex justify-between gap-3">
-      <dt className="text-ink-500">{label}</dt>
-      <dd className="text-right font-medium">{value || '—'}</dd>
+      <dt className="shrink-0 text-ink-500">{label}</dt>
+      <dd className={'min-w-0 text-right font-medium break-words' + (mono && value ? ' font-mono select-all' : '')}>{value || '—'}</dd>
     </div>
   )
 }
@@ -302,7 +319,7 @@ function YearCompare({ model, propertyId, years, byPeriod }: { model: NonNullabl
 }
 
 export function RecurringList({ recs, onEdit, showProperty }: { recs: Recurring[]; onEdit: (r: Recurring) => void; showProperty?: boolean }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const model = useModel()
   if (!recs.length) return <Empty>{t('fixed.none')}</Empty>
   return (
@@ -316,11 +333,25 @@ export function RecurringList({ recs, onEdit, showProperty }: { recs: Recurring[
             </div>
             <div className="text-xs text-ink-500">
               {showProperty && `${model?.data.properties.find((p) => p.id === r.propertyId)?.name ?? ''} · `}
-              {t(`fixed.every_${r.every}`)} · {t('fixed.sinceMonth', { month: monthLabel(r.startMonth, i18n.language, 'short') })}
+              {[
+                r.provider,
+                r.account && `${t('svc.accountShort')} ${r.account}`,
+                t(`fixed.every_${r.every}`),
+                r.dueDay && t('svc.dueDayShort', { day: r.dueDay }),
+                r.method,
+                r.channel && t(`svc.ch_${r.channel}`),
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <Amt value={r.amount} cur={r.currency} className="font-medium" />
+            {(r.billUrl || r.portalUrl) && (
+              <a href={r.billUrl || r.portalUrl} target="_blank" rel="noreferrer" title={t('svc.openBill')} className="rounded-full p-2 text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800">
+                <ExternalLink size={14} />
+              </a>
+            )}
+            {r.amount ? <Amt value={r.amount} cur={r.currency} className="font-medium" /> : <span className="text-xs text-ink-500">{t('svc.varies')}</span>}
             <IconButton label={t('common.edit')} onClick={() => onEdit(r)}>
               <Pencil size={14} />
             </IconButton>
@@ -397,5 +428,98 @@ export function PlanList({ plans, onEdit, showProperty }: { plans: Plan[]; onEdi
         )
       })}
     </ul>
+  )
+}
+
+export function StatusBadge({ status }: { status?: PropertyStatus }) {
+  const { t } = useTranslation()
+  if (!status) return null
+  return <Badge tone={status === 'rented' ? 'good' : status === 'forSale' ? 'info' : 'warn'}>{t(`status.${status}`)}</Badge>
+}
+
+/** Current status, its history and every period without a tenant, with what it cost (spec 2 §6). */
+function StatusCard({ model, property: p, onEdit }: { model: Model; property: Property; onEdit: (c: StatusChange | 'new') => void }) {
+  const { t, i18n } = useTranslation()
+  const { data, flows } = model
+  const lenses = model.lenses
+  const hist = statusHistory(data, p.id)
+  const periods = lenses.map((l) => vacancyPeriods(data, flows, p, l))
+  const cur = currentStatus(data, p)
+  const ongoing = periods[0].find((v) => !v.to)
+  return (
+    <Card className="mt-4">
+      <SectionTitle
+        action={
+          <Button size="sm" onClick={() => onEdit('new')}>
+            <Plus size={14} />
+            {t('status.change')}
+          </Button>
+        }
+      >
+        {t('status.title')}
+      </SectionTitle>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <StatusBadge status={cur} />
+        {!cur && <span className="text-ink-500">{t('status.unknown')}</span>}
+        {ongoing && (
+          <span>
+            {t('status.ongoing', { date: dateLabel(ongoing.from, i18n.language), days: ongoing.days })}{' '}
+            {periods.map((ps, i) => {
+              const v = ps.find((x) => !x.to)
+              return v && (i === 0 || v.cost) ? (
+                <span key={i} className="font-medium">
+                  · {t('status.costSoFar')} <Amt value={v.cost} cur={lenses[i].target} />{' '}
+                </span>
+              ) : null
+            })}
+          </span>
+        )}
+      </div>
+      {periods[0].length > 0 && (
+        <Table
+          className="mt-3"
+          head={
+            <tr>
+              <th className={th}>{t('status.period')}</th>
+              <th className={th}>{t('status.status')}</th>
+              <th className={thNum}>{t('status.days')}</th>
+              <th className={thNum}>{t('status.cost')}</th>
+            </tr>
+          }
+        >
+          {periods[0].map((v, i) => (
+            <tr key={v.from}>
+              <td className={td}>
+                {dateLabel(v.from, i18n.language)} → {v.to ? dateLabel(v.to, i18n.language) : t('status.today')}
+              </td>
+              <td className={td}>{t(`status.${v.status}`)}</td>
+              <td className={tdNum}>{t('status.daysMonths', { days: v.days, months: (v.days / 30.44).toLocaleString(i18n.language, { maximumFractionDigits: 1 }) })}</td>
+              <td className={tdNum}>
+                {periods.map((ps, j) => (j === 0 || ps[i].cost ? <div key={j}><Amt value={ps[i].cost} cur={lenses[j].target} /></div> : null))}
+              </td>
+            </tr>
+          ))}
+        </Table>
+      )}
+      {hist.length > 0 && (
+        <details className="mt-3 text-sm">
+          <summary className="cursor-pointer text-ink-500">{t('status.history', { count: hist.length })}</summary>
+          <ul className="mt-1 divide-y divide-ink-100 dark:divide-ink-800">
+            {[...hist].reverse().map((h) => (
+              <li key={h.id} className="flex items-center justify-between gap-2 py-1.5">
+                <span>
+                  {dateLabel(h.from, i18n.language)} · {t(`status.${h.status}`)}
+                  {h.notes && <span className="text-ink-500"> · {h.notes}</span>}
+                </span>
+                <IconButton label={t('common.edit')} onClick={() => onEdit(h)}>
+                  <Pencil size={14} />
+                </IconButton>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <p className="mt-2 text-xs text-ink-500">{t('status.explain')}</p>
+    </Card>
   )
 }

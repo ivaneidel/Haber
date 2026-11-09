@@ -1,4 +1,7 @@
-# Haber
+# Haber — "Nuestros ingresos"
+
+The app is shown to its user as **Nuestros ingresos** (her choice); the project, repo, package and
+IndexedDB name stay **Haber** so existing data keeps working. See `docs/04-functional-set-2.md`.
 
 Ingresos, gastos de propiedades, inversiones y patrimonio familiar. Local-first PWA: los datos quedan en el
 navegador (IndexedDB), sin cuentas ni servidores.

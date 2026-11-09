@@ -13,7 +13,8 @@ import { remove } from '../lib/repo'
 import { exportXLSX } from '../lib/export'
 import { formatMoney } from '../lib/money'
 import i18next from 'i18next'
-import type { Data } from '../lib/calc'
+import { rentBreakdown, type Data } from '../lib/calc'
+import { isOwnExpense } from '../lib/types'
 import type { Currency } from '../lib/types'
 
 export interface MoveRow {
@@ -44,7 +45,18 @@ export function movementRows(d: Data, t: (k: string, o?: Record<string, unknown>
       period: i.period,
       propertyId: i.propertyId,
       title: type === 'rent' ? prop(i.propertyId) : type === 'pension' ? (d.pensions.find((p) => p.id === i.pensionId)?.name ?? t('entry.pension')) : (i.description ?? ''),
-      sub: type === 'rent' ? (i.payer ?? '') : '',
+      sub:
+        type === 'rent'
+          ? [
+              i.payer,
+              (() => {
+                const b = rentBreakdown(d, i.id)
+                return b && b.gross !== b.net ? t('mov.rentGross', { gross: formatMoney(b.gross, i.currency, i18next.language), fee: formatMoney(b.fee, i.currency, i18next.language), count: b.deductions.length }) : ''
+              })(),
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : '',
       amount: i.amount,
       currency: i.currency,
       method: i.method,
@@ -60,8 +72,19 @@ export function movementRows(d: Data, t: (k: string, o?: Record<string, unknown>
       period: e.kind === 'fixed' ? e.period : undefined,
       propertyId: e.propertyId,
       title: e.kind === 'installment' && e.installmentNo ? `${e.concept} · ${t('plan.cuotaN', { no: e.installmentNo })}` : e.concept,
-      sub: `${prop(e.propertyId)} · ${t(`kind.${e.kind}`)}${e.category && e.category !== e.concept ? ` · ${e.category}` : ''}`,
-      amount: -e.amount,
+      sub: [
+        prop(e.propertyId),
+        t(`kind.${e.kind}`),
+        e.category && e.category !== e.concept ? e.category : '',
+        e.materials ? `${t('work.materials')} ${formatMoney(e.materials, e.currency, i18next.language)}` : '',
+        e.labor ? `${t('work.labor')} ${formatMoney(e.labor, e.currency, i18next.language)}` : '',
+        e.otherCosts ? `${t('work.other')} ${formatMoney(e.otherCosts, e.currency, i18next.language)}` : '',
+        e.managedBy ? t('work.managedShort', { who: e.managedBy }) : '',
+        e.paidBy && e.paidBy !== 'me' ? `${t('work.paidShort', { who: t(`work.by_${e.paidBy}`) })} · ${e.deducted ? (e.incomeId ? t('work.deductedDone') : t('work.deductedPending')) : t('work.notOwnShort')}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      amount: isOwnExpense(e) ? -e.amount : 0,
       currency: e.currency,
       method: e.method,
       notes: e.notes,

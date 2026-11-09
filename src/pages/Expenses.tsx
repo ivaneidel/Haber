@@ -3,11 +3,13 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bars, C, ChartCard, type Row, type SeriesDef } from '../components/Charts'
 import { openEntry } from '../components/entryStore'
-import { PlanForm, RecurringForm } from '../components/forms'
+import { BillForm, PlanForm, RecurringForm } from '../components/forms'
+import { DueList, useDue } from '../components/Due'
+import type { DueItem } from '../lib/calc'
 import { Amt, FxCaption, Kpi, ViewSwitch } from '../components/money'
-import { Button, Card, Empty, PageHeader, SectionTitle, Segmented, Select, Toggle } from '../components/ui'
+import { Button, Card, PageHeader, SectionTitle, Segmented, Select, Toggle } from '../components/ui'
 import { useModel } from '../hooks/useData'
-import { commitments, filterFlows, pendingCuotas, pendingRecurring, recurringMonthly, totals } from '../lib/calc'
+import { commitments, filterFlows, pendingCuotas, pendingDeductions, recurringMonthly, totals } from '../lib/calc'
 import { monthLabel, thisMonth, today } from '../lib/dates'
 import { formatMoney, makeLens, type Lens } from '../lib/money'
 import type { Currency, Plan, Recurring } from '../lib/types'
@@ -25,6 +27,9 @@ export default function Expenses() {
   const [includeFixed, setIncludeFixed] = useState(true)
   const [splitCur, setSplitCur] = useState<Currency>('ARS')
   const [propertyId, setPropertyId] = useState('')
+  const [bill, setBill] = useState<DueItem | null>(null)
+  const [showPaid, setShowPaid] = useState(false)
+  const due = useDue(model)
   if (!model) return null
   const { data, flows, lenses, prefs } = model
   const year = today().slice(0, 4)
@@ -33,7 +38,8 @@ export default function Expenses() {
   const prop = (id: string) => data.properties.find((p) => p.id === id)?.name ?? ''
   const byProp = <T extends { propertyId: string }>(xs: T[]) => (propertyId ? xs.filter((x) => x.propertyId === propertyId) : xs)
 
-  const fixedDue = byProp(pendingRecurring(data, m))
+  const dueShown = due.filter((i) => (!propertyId || i.rec.propertyId === propertyId) && (showPaid || i.urgency !== 'paid'))
+  const pendingDed = byProp(pendingDeductions(data))
   const cuotasDue = pendingCuotas(data, m).filter((c) => !propertyId || c.plan.propertyId === propertyId)
 
   // Future obligations (next 12 months).
@@ -81,26 +87,15 @@ export default function Expenses() {
       </div>
 
       <Card className="mt-4">
-        <SectionTitle>{t('exp.dueNow', { month: monthLabel(m, i18n.language) })}</SectionTitle>
-        {fixedDue.length + cuotasDue.length === 0 ? (
-          <Empty>{t('exp.nothingDue')}</Empty>
-        ) : (
+        <SectionTitle action={<Toggle checked={showPaid} onChange={setShowPaid} label={t('due.showPaid')} />}>{t('due.title')}</SectionTitle>
+        <p className="mb-2 text-sm text-ink-500">{t('due.explain')}</p>
+        <DueList items={dueShown} data={data} showProperty={!propertyId} onBill={setBill} />
+      </Card>
+
+      {cuotasDue.length > 0 && (
+        <Card className="mt-4">
+          <SectionTitle>{t('exp.cuotasDue', { month: monthLabel(m, i18n.language) })}</SectionTitle>
           <ul className="divide-y divide-ink-100 text-sm dark:divide-ink-800">
-            {fixedDue.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                <span>
-                  <strong className="font-medium">{r.concept}</strong> · <span className="text-ink-500">{prop(r.propertyId)}</span> · <Amt value={r.amount} cur={r.currency} />
-                </span>
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    openEntry({ type: 'expense', preset: { kind: 'fixed', propertyId: r.propertyId, recurringId: r.id, concept: r.concept, category: r.category ?? '', amount: r.amount, currency: r.currency, method: r.method ?? '', period: m } })
-                  }
-                >
-                  {t('todo.pay')}
-                </Button>
-              </li>
-            ))}
             {cuotasDue.map(({ plan: p, cuota }) => (
               <li key={`${p.id}-${cuota.no}`} className="flex flex-wrap items-center justify-between gap-2 py-2">
                 <span>
@@ -122,17 +117,36 @@ export default function Expenses() {
               </li>
             ))}
           </ul>
-        )}
-      </Card>
+        </Card>
+      )}
+
+      {pendingDed.length > 0 && (
+        <Card className="mt-4 border-amber-300 dark:border-amber-800">
+          <SectionTitle>{t('work.pendingTitle')}</SectionTitle>
+          <p className="mb-2 text-sm text-ink-500">{t('work.pendingExplain')}</p>
+          <ul className="divide-y divide-ink-100 text-sm dark:divide-ink-800">
+            {pendingDed.map((e) => (
+              <li key={e.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span>
+                  <strong className="font-medium">{e.concept}</strong> · <span className="text-ink-500">{prop(e.propertyId)}</span> · <Amt value={e.amount} cur={e.currency} />
+                </span>
+                <Button size="sm" onClick={() => openEntry({ type: 'rent', preset: { propertyId: e.propertyId } })}>
+                  {t('todo.recordRent')}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <div className="mt-6 mb-3">
         <Segmented<Tab>
           value={tab}
           onChange={setTab}
           options={[
-            { value: 'fixed', label: t('kind.fixed') },
+            { value: 'fixed', label: t('exp.tabServices') },
             { value: 'installment', label: t('kind.installment') },
-            { value: 'eventual', label: t('kind.eventual') },
+            { value: 'eventual', label: t('exp.tabWorks') },
           ]}
         />
       </div>
@@ -206,6 +220,7 @@ export default function Expenses() {
       )}
 
       {rec && <RecurringForm data={data} prefs={prefs} rec={rec === 'new' ? undefined : rec} propertyId={propertyId || undefined} onClose={() => setRec(null)} />}
+      {bill && <BillForm data={data} rec={bill.rec} period={bill.period} bill={bill.bill} onClose={() => setBill(null)} />}
       {plan && <PlanForm data={data} prefs={prefs} plan={plan === 'new' ? undefined : plan} propertyId={propertyId || undefined} onClose={() => setPlan(null)} />}
     </>
   )

@@ -1,6 +1,8 @@
-import { addMonths, monthDiff, monthOf, monthRange, yearOf } from './dates'
+import { addDays, addMonths, daysBetween, daysInMonth, monthDiff, monthOf, monthRange, today as todayStr, yearOf } from './dates'
 import type { Lens } from './money'
+import { isOwnExpense } from './types'
 import type {
+  Bill,
   CapitalMove,
   Currency,
   Expense,
@@ -14,6 +16,8 @@ import type {
   Rate,
   Recurring,
   Sale,
+  StatusChange,
+  PropertyStatus,
   Valuation,
   Yield,
 } from './types'
@@ -33,6 +37,8 @@ export interface Data {
   capital: CapitalMove[]
   pensions: Pension[]
   rates: Rate[]
+  bills: Bill[]
+  statusLog: StatusChange[]
 }
 
 export const emptyData = (): Data => ({
@@ -49,6 +55,8 @@ export const emptyData = (): Data => ({
   capital: [],
   pensions: [],
   rates: [],
+  bills: [],
+  statusLog: [],
 })
 
 // ---------------------------------------------------------------------------
@@ -60,9 +68,12 @@ export type FlowKind = 'rent' | 'pension' | 'other' | 'sale' | 'yield' | 'expens
 export const INCOME_KINDS = ['rent', 'yield', 'sale', 'pension', 'other'] as const
 export type IncomeKind = (typeof INCOME_KINDS)[number]
 
+/** `fee` = honorarios de administración withheld from a rent. */
+export type CostKind = ExpenseKind | 'fee'
+
 export interface Flow {
   kind: FlowKind
-  expenseKind?: ExpenseKind
+  expenseKind?: CostKind
   /** Cash date. */
   date: string
   month: string
@@ -73,31 +84,50 @@ export interface Flow {
   currency: Currency
 }
 
+/**
+ * Rents keep `amount` = what reached her. The agency's fee and any work cost deducted from that
+ * liquidation are added back as rent (gross) AND counted as expenses, so rent − expenses is still
+ * exactly the cash she received — nothing is counted twice. Works paid by someone else and not
+ * deducted from her money are not flows at all.
+ */
 export function toFlows(d: Data): Flow[] {
   const out: Flow[] = []
-  for (const i of d.incomes)
-    out.push({
-      kind: i.source,
-      date: i.date,
-      month: monthOf(i.date),
-      period: i.period,
-      propertyId: i.propertyId,
-      amount: i.amount,
-      currency: i.currency,
-    })
-  for (const e of d.expenses)
-    out.push({
-      kind: 'expense',
-      expenseKind: e.kind,
-      date: e.date,
-      month: monthOf(e.date),
-      propertyId: e.propertyId,
-      amount: e.amount,
-      currency: e.currency,
-    })
+  const incomeById = new Map(d.incomes.map((i) => [i.id, i]))
+  for (const i of d.incomes) {
+    const base = { date: i.date, month: monthOf(i.date), period: i.period, propertyId: i.propertyId, currency: i.currency }
+    out.push({ kind: i.source, amount: i.amount, ...base })
+    if (i.source === 'rent' && i.fee && i.fee > 0) {
+      out.push({ kind: 'rent', amount: i.fee, ...base })
+      out.push({ kind: 'expense', expenseKind: 'fee', amount: i.fee, ...base, period: undefined })
+    }
+  }
+  for (const e of d.expenses) {
+    if (!isOwnExpense(e)) continue
+    const rent = e.deducted && e.incomeId ? incomeById.get(e.incomeId) : undefined
+    // Deducted from a liquidation: the money left her on the rent's date.
+    const date = rent ? rent.date : e.date
+    out.push({ kind: 'expense', expenseKind: e.kind, date, month: monthOf(date), propertyId: e.propertyId, amount: e.amount, currency: e.currency })
+    if (rent) out.push({ kind: 'rent', date: rent.date, month: monthOf(rent.date), period: rent.period, propertyId: rent.propertyId, amount: e.amount, currency: e.currency })
+  }
   for (const s of d.sales) out.push({ kind: 'sale', date: s.date, month: monthOf(s.date), amount: s.net, currency: s.currency })
   for (const y of d.yields) out.push({ kind: 'yield', date: y.date, month: monthOf(y.date), amount: y.amount, currency: y.currency })
   return out
+}
+
+/** Gross rent of one liquidation: net received + fee + work costs deducted from it (same-currency parts). */
+export function rentBreakdown(d: Data, incomeId: string): { net: number; fee: number; deductions: Expense[]; gross: number } | undefined {
+  const i = d.incomes.find((x) => x.id === incomeId)
+  if (!i) return undefined
+  const deductions = d.expenses.filter((e) => e.incomeId === i.id && e.deducted)
+  const fee = i.fee ?? 0
+  const gross = i.amount + fee + deductions.filter((e) => e.currency === i.currency).reduce((s, e) => s + e.amount, 0)
+  return { net: i.amount, fee, deductions, gross }
+}
+
+/** Works paid by the agency/tenant that must come out of a rent and aren't linked to one yet. */
+export function pendingDeductions(d: Data, propertyId?: string): Expense[] {
+  const ids = new Set(d.incomes.map((i) => i.id))
+  return d.expenses.filter((e) => e.deducted && e.paidBy && e.paidBy !== 'me' && (!e.incomeId || !ids.has(e.incomeId)) && (!propertyId || e.propertyId === propertyId))
 }
 
 export interface FlowFilter {
@@ -133,6 +163,8 @@ export interface Totals {
   fixed: number
   installment: number
   eventual: number
+  /** Honorarios de administración. */
+  fee: number
   expense: number
   /** Rent − property expenses: "resultado neto inmobiliario". */
   realEstateNet: number
@@ -148,6 +180,7 @@ export const zeroTotals = (): Totals => ({
   fixed: 0,
   installment: 0,
   eventual: 0,
+  fee: 0,
   expense: 0,
   realEstateNet: 0,
 })
@@ -212,6 +245,99 @@ export function pendingRecurring(d: Data, month: string): Recurring[] {
 /** Usual amount spread per month (bimonthly $100 → $50/month). */
 export function recurringMonthly(r: Recurring): number {
   return r.every ? r.amount / r.every : 0
+}
+
+// ---------------------------------------------------------------------------
+// Bills and due dates (spec 2 §3)
+// ---------------------------------------------------------------------------
+
+export type Urgency = 'overdue' | 'today' | 'soon' | 'later' | 'paid'
+/** Days before the due date when a bill counts as "about to fall due". */
+export const SOON_DAYS = 3
+
+export interface DueItem {
+  key: string
+  rec: Recurring
+  period: string
+  bill?: Bill
+  paid?: Expense
+  /** Bill's due date, or the usual due day in that month. */
+  dueDate?: string
+  /** dueDate comes from the usual day, not from a received bill. */
+  estimated: boolean
+  received: boolean
+  urgency: Urgency
+  /** Days until due (negative = overdue). */
+  days?: number
+  /** Amount to show: the bill's, else the last paid one, else the usual. Reference only. */
+  refAmount?: number
+}
+
+/** The usual due date of a template in a month (day clamped to the month's length). */
+export function usualDueDate(r: Recurring, period: string): string | undefined {
+  if (!r.dueDay) return undefined
+  return `${period}-${String(Math.min(r.dueDay, daysInMonth(period))).padStart(2, '0')}`
+}
+
+export function billFor(d: Data, recurringId: string, period: string): Bill | undefined {
+  return d.bills.find((b) => b.recurringId === recurringId && b.period === period)
+}
+
+/** Most recent payment of a template, for "último importe" references. */
+export function lastPayment(d: Data, recurringId: string): Expense | undefined {
+  return d.expenses.filter((e) => e.recurringId === recurringId).sort((a, b) => b.date.localeCompare(a.date))[0]
+}
+
+export function lastBill(d: Data, recurringId: string): Bill | undefined {
+  return d.bills.filter((b) => b.recurringId === recurringId).sort((a, b) => b.period.localeCompare(a.period))[0]
+}
+
+function dueItem(d: Data, r: Recurring, period: string, now: string): DueItem {
+  const bill = billFor(d, r.id, period)
+  const paid = recurringPaid(r, period, d.expenses)
+  const dueDate = bill?.dueDate || usualDueDate(r, period)
+  const estimated = !bill?.dueDate && !!dueDate
+  const days = dueDate ? daysBetween(now, dueDate) : undefined
+  let urgency: Urgency
+  if (paid) urgency = 'paid'
+  else if (days !== undefined) urgency = days < 0 ? 'overdue' : days === 0 ? 'today' : days <= SOON_DAYS ? 'soon' : 'later'
+  else urgency = period < monthOf(now) ? 'overdue' : 'later'
+  const refAmount = bill?.amount || lastPayment(d, r.id)?.amount || r.amount || undefined
+  return { key: `${r.id}:${period}`, rec: r, period, bill, paid, dueDate, estimated, received: !!bill, urgency, days, refAmount }
+}
+
+/**
+ * What's due around `now`: every active service due this month or in the previous `lookback`
+ * months (only from the month the template was created, so old history doesn't flood the list),
+ * next month's ones already within the warning window, plus any received bill still unpaid.
+ * Sorted most urgent first.
+ */
+export function dueItems(d: Data, now = todayStr(), lookback = 2): DueItem[] {
+  const cur = monthOf(now)
+  const out = new Map<string, DueItem>()
+  for (const r of d.recurring) {
+    if (!r.active || isArchived(d, r.propertyId)) continue
+    const created = r.createdAt ? r.createdAt.slice(0, 7) : r.startMonth
+    for (let m = addMonths(cur, -lookback); m <= addMonths(cur, 1); m = addMonths(m, 1)) {
+      if (!isDue(r, m) || (m < cur && m < created)) continue
+      const it = dueItem(d, r, m, now)
+      if (m > cur && !(it.urgency === 'soon' || it.urgency === 'today' || it.received)) continue
+      out.set(it.key, it)
+    }
+  }
+  for (const b of d.bills) {
+    const r = d.recurring.find((x) => x.id === b.recurringId)
+    if (!r || out.has(`${r.id}:${b.period}`)) continue
+    const it = dueItem(d, r, b.period, now)
+    if (it.urgency !== 'paid') out.set(it.key, it)
+  }
+  const rank: Record<Urgency, number> = { overdue: 0, today: 1, soon: 2, later: 3, paid: 4 }
+  return [...out.values()].sort((a, b) => rank[a.urgency] - rank[b.urgency] || (a.dueDate ?? `${a.period}-99`).localeCompare(b.dueDate ?? `${b.period}-99`))
+}
+
+/** Items that need attention now: overdue, due today, due within SOON_DAYS. */
+export function urgentItems(items: DueItem[]): DueItem[] {
+  return items.filter((i) => i.urgency === 'overdue' || i.urgency === 'today' || i.urgency === 'soon')
 }
 
 // ---------------------------------------------------------------------------
@@ -353,7 +479,71 @@ export function rentsWithoutRecord(d: Data, month: string): Property[] {
 }
 
 // ---------------------------------------------------------------------------
-// Rentabilidad (spec §10)
+// Status and vacancy (spec 2 §6)
+// ---------------------------------------------------------------------------
+
+export function statusHistory(d: Data, propertyId: string): StatusChange[] {
+  return d.statusLog.filter((x) => x.propertyId === propertyId).sort((a, b) => a.from.localeCompare(b.from) || a.createdAt.localeCompare(b.createdAt))
+}
+
+/** With no history, a property with a tenant or reference rent is taken as rented; otherwise unknown. */
+function implicitStatus(p: Property): PropertyStatus | undefined {
+  return p.tenant || (p.refRent ?? 0) > 0 ? 'rented' : undefined
+}
+
+export function currentStatus(d: Data, p: Property, on = todayStr()): PropertyStatus | undefined {
+  const h = statusHistory(d, p.id).filter((x) => x.from <= on)
+  return h.length ? h[h.length - 1].status : implicitStatus(p)
+}
+
+export interface StatusSpan {
+  status: PropertyStatus
+  from: string
+  /** Exclusive end; undefined = still in this status. */
+  to?: string
+  id?: string
+}
+
+/** History as contiguous spans. Before the first recorded change, the implicit status (if any) applies. */
+export function statusSpans(d: Data, p: Property): StatusSpan[] {
+  const h = statusHistory(d, p.id)
+  const spans: StatusSpan[] = h.map((x, i) => ({ status: x.status, from: x.from, to: h[i + 1]?.from, id: x.id }))
+  const imp = implicitStatus(p)
+  if (imp && (!h.length || imp !== h[0].status)) spans.unshift({ status: imp, from: '1900-01-01', to: h[0]?.from })
+  return spans
+}
+
+const overlapDays = (s: StatusSpan, from: string, toExcl: string) => {
+  const a = s.from > from ? s.from : from
+  const b = s.to && s.to < toExcl ? s.to : toExcl
+  return Math.max(0, daysBetween(a, b))
+}
+
+export interface VacancyPeriod {
+  status: PropertyStatus
+  from: string
+  to?: string
+  days: number
+  /** Own property expenses paid while it wasn't rented. */
+  cost: number
+}
+
+/** Every period not rented, with its length (until today if ongoing) and what it cost. */
+export function vacancyPeriods(d: Data, flows: Flow[], p: Property, lens: Lens, now = todayStr()): VacancyPeriod[] {
+  const exp = flows.filter((f) => f.kind === 'expense' && f.propertyId === p.id)
+  return statusSpans(d, p)
+    .filter((s) => s.status !== 'rented' && s.from > '1900-01-01')
+    .map((s) => {
+      const end = s.to ?? addDays(now, 1)
+      const cost = exp.filter((f) => f.date >= s.from && f.date < end).reduce((t, f) => t + lens(f.amount, f.currency, f.date), 0)
+      return { status: s.status, from: s.from, to: s.to, days: Math.max(0, daysBetween(s.from, end)), cost }
+    })
+}
+
+export const DAYS_PER_MONTH = 30.44
+
+// ---------------------------------------------------------------------------
+// Rentabilidad (spec §10, spec 2 §7)
 // ---------------------------------------------------------------------------
 
 export interface YieldRow {
@@ -362,24 +552,31 @@ export interface YieldRow {
   /** Currency of the valuation; incomes and expenses are converted into it. */
   currency: Currency
   gross: number
+  fixed: number
+  installment: number
+  eventual: number
+  fee: number
   expenses: number
   net: number
   value?: number
   approx: boolean
   pct: number | null
+  /** Months rented / not rented in the year (up to today); null when the status is unknown. */
+  monthsRented: number | null
+  monthsVacant: number | null
+  /** Expenses paid in the year while it was not rented. */
+  vacancyCost: number
   /** Change of market value during the year — appreciation, kept apart from rent yield. */
   appreciation: number | null
   appreciationPct: number | null
 }
 
-export function propertyYield(d: Data, flows: Flow[], p: Property, year: number, lensFor: (c: Currency) => Lens): YieldRow {
+export function propertyYield(d: Data, flows: Flow[], p: Property, year: number, lensFor: (c: Currency) => Lens, now = todayStr()): YieldRow {
   const val = valuationForYear(d, p.id, year)
   const currency = val?.v.currency ?? 'USD'
   const lens = lensFor(currency)
-  const t = totals(
-    flows.filter((f) => f.propertyId === p.id && yearOf(f.date) === year),
-    lens,
-  )
+  const mine = flows.filter((f) => f.propertyId === p.id && yearOf(f.date) === year)
+  const t = totals(mine, lens)
   const value = val?.v.value
   const pct = value ? (t.realEstateNet / value) * 100 : null
   const prev = valuationForYear(d, p.id, year - 1)
@@ -389,7 +586,46 @@ export function propertyYield(d: Data, flows: Flow[], p: Property, year: number,
     appreciation = val.v.value - prev.v.value
     appreciationPct = prev.v.value ? (appreciation / prev.v.value) * 100 : null
   }
-  return { property: p, year, currency, gross: t.rent, expenses: t.expense, net: t.realEstateNet, value, approx: !!val?.approx, pct, appreciation, appreciationPct }
+  // Months rented/vacant within the year, up to today.
+  const yFrom = `${year}-01-01`
+  const yTo = `${year + 1}-01-01` < addDays(now, 1) ? `${year + 1}-01-01` : addDays(now, 1)
+  const spans = yFrom < yTo ? statusSpans(d, p) : []
+  let rentedDays = 0
+  let vacantDays = 0
+  let vacancyCost = 0
+  for (const s of spans) {
+    const days = overlapDays(s, yFrom, yTo)
+    if (!days) continue
+    if (s.status === 'rented') rentedDays += days
+    else {
+      vacantDays += days
+      const a = s.from > yFrom ? s.from : yFrom
+      const b = s.to && s.to < yTo ? s.to : yTo
+      vacancyCost += mine.filter((f) => f.kind === 'expense' && f.date >= a && f.date < b).reduce((x, f) => x + lens(f.amount, f.currency, f.date), 0)
+    }
+  }
+  const known = spans.length > 0
+  const r1 = (n: number) => Math.round((n / DAYS_PER_MONTH) * 10) / 10
+  return {
+    property: p,
+    year,
+    currency,
+    gross: t.rent,
+    fixed: t.fixed,
+    installment: t.installment,
+    eventual: t.eventual,
+    fee: t.fee,
+    expenses: t.expense,
+    net: t.realEstateNet,
+    value,
+    approx: !!val?.approx,
+    pct,
+    monthsRented: known ? r1(rentedDays) : null,
+    monthsVacant: known ? r1(vacantDays) : null,
+    vacancyCost,
+    appreciation,
+    appreciationPct,
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -15,7 +15,12 @@ interface Base {
 export interface Property extends Base {
   name: string
   address?: string
+  postalCode?: string
   city?: string
+  /** Nomenclatura catastral. */
+  cadastre?: string
+  /** Número de partida inmobiliaria. */
+  parcel?: string
   province?: string
   tenant?: string
   contractStart?: string
@@ -55,8 +60,11 @@ export interface Income extends Base {
   payer?: string
   pensionId?: string
   description?: string
+  /** What actually reached her (net of the agency's fee and deductions). Cash basis. */
   amount: number
   currency: Currency
+  /** Rent: honorarios de administración withheld by the agency (same currency). Gross = amount + fee + deductions. */
+  fee?: number | null
   method?: string
   notes?: string
 }
@@ -81,21 +89,81 @@ export interface Expense extends Base {
   /** installment: the plan and which cuota (1-based). */
   planId?: string
   installmentNo?: number
+  /** eventual (works): when the job was done; `date` is when it was paid. */
+  workDate?: string
+  /** Optional breakdown of `amount` (always the total). Parts never add on top of it. */
+  materials?: number | null
+  labor?: number | null
+  otherCosts?: number | null
+  managedBy?: string
+  /** Who paid it. Default (undefined) = me. */
+  paidBy?: PaidBy
+  /** Paid by someone else but taken out of a rent liquidation: it IS her cost. */
+  deducted?: boolean
+  /** The rent (Income) whose liquidation it was deducted from. */
+  incomeId?: string
 }
 
-/** A fixed, recurring cost (Rentas, tasas, servicios…). Payments are Expense rows. */
+export type PaidBy = 'me' | 'agency' | 'tenant' | 'other'
+export const PAID_BY: PaidBy[] = ['me', 'agency', 'tenant', 'other']
+
+/** True when the expense costs her money (she paid, or it was deducted from her rent). */
+export function isOwnExpense(e: Pick<Expense, 'paidBy' | 'deducted'>): boolean {
+  return !e.paidBy || e.paidBy === 'me' || !!e.deducted
+}
+
+export type BillChannel = 'email' | 'whatsapp' | 'paper' | 'portal' | 'other'
+export const BILL_CHANNELS: BillChannel[] = ['email', 'whatsapp', 'paper', 'portal', 'other']
+
+/**
+ * A fixed, recurring cost (Rentas, tasas, servicios…) — also the service/tax *account* of a
+ * property: provider, client number, how the bill arrives. Payments are Expense rows.
+ */
 export interface Recurring extends Base {
   propertyId: string
   concept: string
   category?: string
+  provider?: string
+  /** Número de cliente / cuenta / partida. */
+  account?: string
+  /** Usual due day of the month (1–31). */
+  dueDay?: number | null
+  channel?: BillChannel
+  channelEmail?: string
+  portalUrl?: string
+  billUrl?: string
   /** Months between charges: 1 monthly, 2 bimonthly, … 12 yearly; 0 = irregular. */
   every: number
   /** First month it's due; with `every` it decides which months are due. */
   startMonth: string
+  /** Usual amount; 0 = varies (only a reference, never assumed). */
   amount: number
   currency: Currency
   method?: string
   active: boolean
+  notes?: string
+}
+
+/** A received invoice for one period of a Recurring. Paid ⇔ an Expense with the same recurringId+period exists. */
+export interface Bill extends Base {
+  recurringId: string
+  propertyId: string
+  period: string
+  amount?: number | null
+  currency: Currency
+  receivedDate?: string
+  dueDate?: string
+  notes?: string
+}
+
+export type PropertyStatus = 'rented' | 'vacant' | 'repair' | 'preparing' | 'forSale'
+export const PROPERTY_STATUSES: PropertyStatus[] = ['rented', 'vacant', 'repair', 'preparing', 'forSale']
+
+/** Status history of a property: each row is in effect from `from` until the next one. */
+export interface StatusChange extends Base {
+  propertyId: string
+  status: PropertyStatus
+  from: string
   notes?: string
 }
 

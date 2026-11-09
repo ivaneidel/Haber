@@ -1,13 +1,16 @@
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { addMonths, isDate, isMonth, thisMonth, today } from '../lib/dates'
-import { capitalSummary, currentValuation, type Data } from '../lib/calc'
+import { capitalSummary, currentStatus, currentValuation, lastBill, lastPayment, usualDueDate, type Data } from '../lib/calc'
 import { formatMoney, round2 } from '../lib/money'
 import { rememberInList, type Prefs } from '../lib/prefs'
 import { apply, putOp, putRaw, save, saveProperty } from '../lib/repo'
 import type { Op } from '../lib/store/types'
 import { rateId } from '../lib/fx'
-import type { CapitalMove, Currency, Investment, Pension, Plan, Property, PropertySale, Recurring, Valuation } from '../lib/types'
+import { BILL_CHANNELS, PROPERTY_STATUSES } from '../lib/types'
+import type { Bill, BillChannel, CapitalMove, Currency, Investment, Pension, Plan, Property, PropertySale, PropertyStatus, Recurring, StatusChange, Valuation } from '../lib/types'
+import { delOp, remove } from '../lib/repo'
+import { ExternalLink, Trash2 } from 'lucide-react'
 import { CurrencySelect } from './EntryForm'
 import { toast } from './toast'
 import { Button, Chips, Field, Input, MonthInput, Note, NumInput, Select, Sheet, TextArea, Toggle } from './ui'
@@ -90,6 +93,9 @@ export function PropertyForm({ data, property, onClose }: { data: Data; property
   const [p, setP] = useState({
     name: property?.name ?? '',
     address: property?.address ?? '',
+    postalCode: property?.postalCode ?? '',
+    cadastre: property?.cadastre ?? '',
+    parcel: property?.parcel ?? '',
     city: property?.city ?? '',
     province: property?.province ?? 'Río Negro',
     tenant: property?.tenant ?? '',
@@ -102,6 +108,9 @@ export function PropertyForm({ data, property, onClose }: { data: Data; property
   })
   const [value, setValue] = useState<number | null>(cur?.value ?? null)
   const [valueCur, setValueCur] = useState<Currency>(cur?.currency ?? 'USD')
+  const statusNow = property ? currentStatus(data, property) : undefined
+  const [status, setStatus] = useState<PropertyStatus | undefined>(statusNow)
+  const [statusFrom, setStatusFrom] = useState(today())
   const set = (patch: Partial<typeof p>) => setP((x) => ({ ...x, ...patch }))
   const errors: Errors = {
     name: p.name.trim() ? undefined : t('form.required'),
@@ -114,7 +123,7 @@ export function PropertyForm({ data, property, onClose }: { data: Data; property
       onClose={onClose}
       errors={errors}
       onSave={async () => {
-        await saveProperty(
+        const id = await saveProperty(
           {
             ...(property ?? {}),
             ...p,
@@ -122,10 +131,15 @@ export function PropertyForm({ data, property, onClose }: { data: Data; property
             refRent: p.refRent,
             contractStart: p.contractStart || undefined,
             contractEnd: p.contractEnd || undefined,
+            postalCode: p.postalCode.trim() || undefined,
+            cadastre: p.cadastre.trim() || undefined,
+            parcel: p.parcel.trim() || undefined,
           },
           { amount: value, currency: valueCur },
           data,
         )
+        // A status change is a new history row (vacancy periods come from it).
+        if (status && status !== statusNow) await save('statusLog', { propertyId: id, status, from: isDate(statusFrom) ? statusFrom : today() })
       }}
     >
       {(err) => (
@@ -136,14 +150,32 @@ export function PropertyForm({ data, property, onClose }: { data: Data; property
           <Field label={t('property.address')} optional>
             <Input value={p.address} onChange={(e) => set({ address: e.target.value })} />
           </Field>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <Field label={t('property.city')} optional>
               <Input value={p.city} onChange={(e) => set({ city: e.target.value })} />
             </Field>
             <Field label={t('property.province')} optional>
               <Input value={p.province} onChange={(e) => set({ province: e.target.value })} />
             </Field>
+            <Field label={t('property.postalCode')} optional>
+              <Input value={p.postalCode} onChange={(e) => set({ postalCode: e.target.value })} />
+            </Field>
           </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={t('property.cadastre')} optional>
+              <Input value={p.cadastre} onChange={(e) => set({ cadastre: e.target.value })} />
+            </Field>
+            <Field label={t('property.parcel')} optional>
+              <Input value={p.parcel} onChange={(e) => set({ parcel: e.target.value })} />
+            </Field>
+          </div>
+          <h4 className="pt-2 text-sm font-semibold text-ink-600 dark:text-ink-300">{t('status.title')}</h4>
+          <Chips<PropertyStatus> size="sm" value={status} onChange={setStatus} options={PROPERTY_STATUSES.map((x) => ({ value: x, label: t(`status.${x}`) }))} />
+          {status && status !== statusNow && (
+            <Field label={t('status.since')} hint={t('status.sinceHint')}>
+              <Input type="date" value={statusFrom} onChange={(e) => setStatusFrom(e.target.value)} className="w-48" />
+            </Field>
+          )}
           <h4 className="pt-2 text-sm font-semibold text-ink-600 dark:text-ink-300">{t('property.contract')}</h4>
           <Field label={t('property.tenant')} optional>
             <Input value={p.tenant} onChange={(e) => set({ tenant: e.target.value })} />
@@ -231,20 +263,44 @@ export function RecurringForm({ data, prefs, rec, propertyId, onClose }: { data:
     method: rec?.method ?? '',
     active: rec?.active ?? true,
     notes: rec?.notes ?? '',
+    provider: rec?.provider ?? '',
+    account: rec?.account ?? '',
+    dueDay: rec?.dueDay ?? (null as number | null),
+    channel: rec?.channel ?? (undefined as BillChannel | undefined),
+    channelEmail: rec?.channelEmail ?? '',
+    portalUrl: rec?.portalUrl ?? '',
+    billUrl: rec?.billUrl ?? '',
   })
   const set = (patch: Partial<typeof r>) => setR((x) => ({ ...x, ...patch }))
   const errors: Errors = {
     propertyId: r.propertyId ? undefined : t('form.required'),
     concept: r.concept.trim() ? undefined : t('form.required'),
-    amount: positive(r.amount) ? undefined : t('form.amountPositive'),
+    amount: r.amount === null || r.amount >= 0 ? undefined : t('form.amountPositive'),
+    dueDay: r.dueDay === null || (Number.isInteger(r.dueDay) && r.dueDay >= 1 && r.dueDay <= 31) ? undefined : t('svc.dueDayInvalid'),
   }
+  const trim = (x: string) => x.trim() || undefined
   return (
     <FormSheet
       title={rec ? t('fixed.edit') : t('fixed.new')}
       onClose={onClose}
       errors={errors}
       onSave={async () => {
-        await save('recurring', { ...(rec ?? {}), ...r, concept: r.concept.trim(), category: r.category || undefined, amount: round2(r.amount!), method: r.method || undefined, notes: r.notes.trim() || undefined })
+        await save('recurring', {
+          ...(rec ?? {}),
+          ...r,
+          concept: r.concept.trim(),
+          category: r.category || undefined,
+          amount: round2(r.amount ?? 0),
+          method: r.method || undefined,
+          notes: trim(r.notes),
+          provider: trim(r.provider),
+          account: trim(r.account),
+          dueDay: r.dueDay,
+          channel: r.channel,
+          channelEmail: trim(r.channelEmail),
+          portalUrl: trim(r.portalUrl),
+          billUrl: trim(r.billUrl),
+        })
       }}
     >
       {(err) => (
@@ -275,13 +331,42 @@ export function RecurringForm({ data, prefs, rec, propertyId, onClose }: { data:
               <MonthInput value={r.startMonth} onChange={(m) => set({ startMonth: m })} />
             </Field>
           </div>
-          <Field label={t('fixed.usual')} error={err('amount')} hint={t('fixed.usualHint')}>
-            <div className="flex gap-2">
-              <NumInput value={r.amount} onValue={(n) => set({ amount: n })} className="flex-1" />
-              <CurrencySelect value={r.currency} onChange={(c) => set({ currency: c })} />
-            </div>
-          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={t('svc.provider')} optional>
+              <Input value={r.provider} onChange={(e) => set({ provider: e.target.value })} placeholder={t('svc.providerPh')} />
+            </Field>
+            <Field label={t('svc.account')} optional>
+              <Input value={r.account} onChange={(e) => set({ account: e.target.value })} />
+            </Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={t('fixed.usual')} error={err('amount')} hint={t('fixed.usualHint')} optional>
+              <div className="flex gap-2">
+                <NumInput value={r.amount || null} onValue={(n) => set({ amount: n })} className="flex-1" placeholder={t('svc.varies')} />
+                <CurrencySelect value={r.currency} onChange={(c) => set({ currency: c })} />
+              </div>
+            </Field>
+            <Field label={t('svc.dueDay')} error={err('dueDay')} hint={t('svc.dueDayHint')} optional>
+              <NumInput value={r.dueDay} onValue={(n) => set({ dueDay: n })} className="w-24" placeholder="10" />
+            </Field>
+          </div>
           <MethodSelect prefs={prefs} value={r.method} onChange={(v) => set({ method: v })} />
+          <Field label={t('svc.channel')} optional>
+            <Chips<BillChannel> size="sm" value={r.channel} onChange={(v) => set({ channel: v === r.channel ? undefined : v })} options={BILL_CHANNELS.map((c) => ({ value: c, label: t(`svc.ch_${c}`) }))} />
+          </Field>
+          {r.channel === 'email' && (
+            <Field label={t('svc.channelEmail')} optional>
+              <Input type="email" value={r.channelEmail} onChange={(e) => set({ channelEmail: e.target.value })} />
+            </Field>
+          )}
+          {(r.channel === 'portal' || r.portalUrl) && (
+            <Field label={t('svc.portalUrl')} hint={t('svc.portalHint')} optional>
+              <Input type="url" value={r.portalUrl} onChange={(e) => set({ portalUrl: e.target.value })} placeholder="https://" />
+            </Field>
+          )}
+          <Field label={t('svc.billUrl')} optional>
+            <Input type="url" value={r.billUrl} onChange={(e) => set({ billUrl: e.target.value })} placeholder="https://" />
+          </Field>
           {rec && <Toggle checked={r.active} onChange={(v) => set({ active: v })} label={t('fixed.active')} hint={t('fixed.activeHint')} />}
           <Field label={t('form.notes')} optional>
             <TextArea value={r.notes} onChange={(e) => set({ notes: e.target.value })} />
@@ -836,6 +921,163 @@ export function RateForm({ prefs, onClose }: { prefs: Prefs; onClose: () => void
           </Field>
           <Field label={t('fx.value')} error={err('value')} hint={t('fx.valueHint')}>
             <NumInput value={value} onValue={setValue} autoFocus />
+          </Field>
+        </>
+      )}
+    </FormSheet>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+/** "Recibí la factura": one period of a service. Everything known is proposed; the amount is only a reference. */
+export function BillForm({ data, rec, period, bill, onClose }: { data: Data; rec: Recurring; period: string; bill?: Bill; onClose: () => void }) {
+  const { t, i18n } = useTranslation()
+  const last = lastBill(data, rec.id)
+  const lastPaid = lastPayment(data, rec.id)
+  const ref = last && last.id !== bill?.id && last.amount ? { amount: last.amount, currency: last.currency } : lastPaid ? { amount: lastPaid.amount, currency: lastPaid.currency } : rec.amount ? { amount: rec.amount, currency: rec.currency } : undefined
+  // Due date: the usual day, or the day of the last bill's due date.
+  const lastDay = last?.dueDate ? Number(last.dueDate.slice(8)) : undefined
+  const suggestedDue = usualDueDate(rec, period) ?? (lastDay ? usualDueDate({ ...rec, dueDay: lastDay }, period) : undefined)
+  const [b, setB] = useState({
+    period: bill?.period ?? period,
+    receivedDate: bill?.receivedDate ?? today(),
+    dueDate: bill?.dueDate ?? suggestedDue ?? '',
+    amount: bill?.amount ?? (null as number | null),
+    currency: bill?.currency ?? rec.currency,
+    notes: bill?.notes ?? '',
+  })
+  const set = (patch: Partial<typeof b>) => setB((x) => ({ ...x, ...patch }))
+  const prop = data.properties.find((p) => p.id === rec.propertyId)
+  const dup = data.bills.find((x) => x.recurringId === rec.id && x.period === b.period && x.id !== bill?.id)
+  return (
+    <FormSheet
+      title={t('svc.billTitle', { name: rec.concept })}
+      onClose={onClose}
+      errors={{
+        period: isMonth(b.period) ? undefined : t('form.required'),
+        dueDate: !b.dueDate || isDate(b.dueDate) ? undefined : t('form.required'),
+        amount: b.amount === null || b.amount >= 0 ? undefined : t('form.amountPositive'),
+        dup: dup ? t('svc.billDup') : undefined,
+      }}
+      extra={
+        bill && (
+          <Button variant="danger" size="sm" onClick={() => confirmDelete(t('svc.billDeleteConfirm')) && void remove('bills', bill.id).then(onClose)}>
+            <Trash2 size={14} />
+            {t('common.delete')}
+          </Button>
+        )
+      }
+      onSave={async () => {
+        await save('bills', {
+          ...(bill ?? {}),
+          recurringId: rec.id,
+          propertyId: rec.propertyId,
+          period: b.period,
+          receivedDate: b.receivedDate || undefined,
+          dueDate: b.dueDate || undefined,
+          amount: b.amount === null ? null : round2(b.amount),
+          currency: b.currency,
+          notes: b.notes.trim() || undefined,
+        })
+      }}
+    >
+      {(err) => (
+        <>
+          <AccountCard rec={rec} propertyName={prop?.name} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={t('svc.period')} error={err('period') ?? err('dup')}>
+              <MonthInput value={b.period} onChange={(m) => set({ period: m })} />
+            </Field>
+            <Field label={t('svc.receivedDate')}>
+              <Input type="date" value={b.receivedDate} onChange={(e) => set({ receivedDate: e.target.value })} />
+            </Field>
+          </div>
+          <Field label={t('svc.dueDate')} error={err('dueDate')} hint={!bill && suggestedDue && b.dueDate === suggestedDue ? t('svc.dueSuggested') : undefined}>
+            <Input type="date" value={b.dueDate} onChange={(e) => set({ dueDate: e.target.value })} className="w-48" />
+          </Field>
+          <Field label={t('svc.billAmount')} error={err('amount')} optional>
+            <div className="flex gap-2">
+              <NumInput value={b.amount} onValue={(n) => set({ amount: n })} className="flex-1" placeholder="0" autoFocus />
+              <CurrencySelect value={b.currency} onChange={(c) => set({ currency: c })} />
+            </div>
+          </Field>
+          {ref && b.amount === null && (
+            <button type="button" onClick={() => set({ amount: ref.amount, currency: ref.currency })} className="-mt-2 cursor-pointer rounded-full bg-ink-100 px-2.5 py-1 text-xs text-ink-700 hover:bg-ink-200 dark:bg-ink-800 dark:text-ink-200 dark:hover:bg-ink-700">
+              {t('svc.lastRef', { amount: formatMoney(ref.amount, ref.currency, i18n.language) })}
+            </button>
+          )}
+          <Field label={t('form.notes')} optional>
+            <TextArea value={b.notes} onChange={(e) => set({ notes: e.target.value })} />
+          </Field>
+        </>
+      )}
+    </FormSheet>
+  )
+}
+
+const confirmDelete = (msg: string) => (typeof window !== 'undefined' ? window.confirm(msg) : true)
+
+/** Everything stored about a service account: what she'd otherwise have to look up again. */
+export function AccountCard({ rec, propertyName }: { rec: Recurring; propertyName?: string }) {
+  const { t } = useTranslation()
+  const rows: [string, ReactNode][] = []
+  if (propertyName) rows.push([t('form.property'), propertyName])
+  if (rec.provider) rows.push([t('svc.provider'), rec.provider])
+  if (rec.account) rows.push([t('svc.account'), <span key="acc" className="font-mono select-all">{rec.account}</span>])
+  if (rec.method) rows.push([t('form.payMethod'), rec.method])
+  if (rec.channel) rows.push([t('svc.channel'), `${t(`svc.ch_${rec.channel}`)}${rec.channelEmail ? ` · ${rec.channelEmail}` : ''}`])
+  const link = (href: string, label: string) => (
+    <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand-700 underline dark:text-brand-300">
+      {label}
+      <ExternalLink size={12} />
+    </a>
+  )
+  if (rec.portalUrl) rows.push([t('svc.portal'), link(rec.portalUrl, t('svc.openPortal'))])
+  if (rec.billUrl) rows.push([t('svc.billLink'), link(rec.billUrl, t('svc.openBill'))])
+  if (!rows.length) return null
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-xl bg-ink-100 px-3 py-2 text-sm dark:bg-ink-800">
+      {rows.map(([k, v]) => (
+        <div key={k} className="contents">
+          <dt className="text-ink-500">{k}</dt>
+          <dd className="min-w-0 break-words">{v}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+export function StatusForm({ propertyId, change, onClose }: { propertyId: string; change?: StatusChange; onClose: () => void }) {
+  const { t } = useTranslation()
+  const [status, setStatus] = useState<PropertyStatus>(change?.status ?? 'vacant')
+  const [from, setFrom] = useState(change?.from ?? today())
+  const [notes, setNotes] = useState(change?.notes ?? '')
+  return (
+    <FormSheet
+      title={change ? t('status.editTitle') : t('status.changeTitle')}
+      onClose={onClose}
+      errors={{ from: isDate(from) ? undefined : t('form.required') }}
+      extra={
+        change && (
+          <Button variant="danger" size="sm" onClick={() => confirmDelete(t('common.deleteConfirm')) && void apply([delOp('statusLog', change.id)]).then(onClose)}>
+            <Trash2 size={14} />
+            {t('common.delete')}
+          </Button>
+        )
+      }
+      onSave={async () => {
+        await save('statusLog', { ...(change ?? {}), propertyId, status, from, notes: notes.trim() || undefined })
+      }}
+    >
+      {(err) => (
+        <>
+          <Chips<PropertyStatus> value={status} onChange={setStatus} options={PROPERTY_STATUSES.map((x) => ({ value: x, label: t(`status.${x}`) }))} />
+          <Field label={t('status.since')} error={err('from')} hint={t('status.sinceHint')}>
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-48" />
+          </Field>
+          <Field label={t('form.notes')} optional>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
           </Field>
         </>
       )}

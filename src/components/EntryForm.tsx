@@ -1,13 +1,15 @@
-import { Banknote, Building2, Gift, Landmark, PiggyBank, ShoppingBag, Wrench } from 'lucide-react'
+import { Banknote, Building2, Gift, History, Landmark, PiggyBank, ShoppingBag, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isDate, isMonth, monthOf, thisMonth, today } from '../lib/dates'
-import { planStatus, suggestedRentPeriod, type Data } from '../lib/calc'
+import { pendingDeductions, planStatus, suggestedRentPeriod, type Data } from '../lib/calc'
 import { formatMoney, round2 } from '../lib/money'
 import { rememberInList, type Prefs } from '../lib/prefs'
 import { apply, putOp, save } from '../lib/repo'
 import type { Op } from '../lib/store/types'
-import type { Currency, Expense, ExpenseKind, Income, Sale, Yield } from '../lib/types'
+import { PAID_BY, isOwnExpense } from '../lib/types'
+import type { Currency, Expense, ExpenseKind, Income, PaidBy, Sale, Yield } from '../lib/types'
+import { dateLabel } from '../lib/dates'
 import { useModel } from '../hooks/useData'
 import { onOpenEntry, type EntryRecord, type EntryRequest, type EntryType } from './entryStore'
 import { toast } from './toast'
@@ -41,6 +43,18 @@ interface Draft {
   toCapital: boolean
   pensionId: string
   updateUsual: boolean
+  /** rent: agency fee and the works deducted from this liquidation. */
+  fee: number | null
+  deductionIds: string[]
+  /** eventual works */
+  workDate: string
+  materials: number | null
+  labor: number | null
+  otherCosts: number | null
+  managedBy: string
+  paidBy: PaidBy
+  deducted: boolean
+  incomeId: string
 }
 
 const blank = (type: EntryType): Draft => ({
@@ -68,9 +82,19 @@ const blank = (type: EntryType): Draft => ({
   toCapital: false,
   pensionId: '',
   updateUsual: false,
+  fee: null,
+  deductionIds: [],
+  workDate: '',
+  materials: null,
+  labor: null,
+  otherCosts: null,
+  managedBy: '',
+  paidBy: 'me',
+  deducted: false,
+  incomeId: '',
 })
 
-function fromRecord(r: EntryRecord): Draft {
+function fromRecord(r: EntryRecord, d?: Data): Draft {
   const base = { id: r.row.id, createdAt: r.row.createdAt, notes: r.row.notes ?? '' }
   switch (r.table) {
     case 'incomes': {
@@ -87,6 +111,8 @@ function fromRecord(r: EntryRecord): Draft {
         amount: i.amount,
         currency: i.currency,
         method: i.method ?? '',
+        fee: i.fee ?? null,
+        deductionIds: d ? d.expenses.filter((e) => e.incomeId === i.id).map((e) => e.id) : [],
       }
     }
     case 'expenses': {
@@ -106,6 +132,14 @@ function fromRecord(r: EntryRecord): Draft {
         recurringId: e.recurringId ?? '',
         planId: e.planId ?? '',
         installmentNo: e.installmentNo ?? null,
+        workDate: e.workDate ?? '',
+        materials: e.materials ?? null,
+        labor: e.labor ?? null,
+        otherCosts: e.otherCosts ?? null,
+        managedBy: e.managedBy ?? '',
+        paidBy: e.paidBy ?? 'me',
+        deducted: !!e.deducted,
+        incomeId: e.incomeId ?? '',
       }
     }
     case 'sales': {
@@ -151,7 +185,17 @@ function smartDefaults(d: Data, prefs: Prefs, f: Draft): Draft {
     out.amount = past[0]?.amount ?? p?.refRent ?? null
     out.currency = past[0]?.currency ?? p?.refRentCurrency ?? 'ARS'
     out.method = past[0]?.method ?? out.method
+    out.fee = past[0]?.fee ?? null
     out.period = suggestedRentPeriod(d, f.propertyId, thisMonth())
+    // Works the agency paid and must take out of this liquidation: proposed, she confirms.
+    const pending = pendingDeductions(d, f.propertyId)
+    out.deductionIds = pending.map((e) => e.id)
+    // Suggested net = the usual one (last net without last month's one-off deductions) − this month's.
+    if (past[0]) {
+      const sameCur = (xs: Expense[]) => xs.filter((e) => e.currency === past[0].currency).reduce((s, e) => s + e.amount, 0)
+      const usual = past[0].amount + sameCur(d.expenses.filter((e) => e.incomeId === past[0].id && e.deducted))
+      out.amount = round2(Math.max(0, usual - sameCur(pending)))
+    }
   }
   if (!out.method) {
     const pool =
@@ -187,16 +231,9 @@ function EntryForm({ req, onClose }: { req: EntryRequest; onClose: () => void })
     if (!model || f) return
     const { data, prefs } = model
     let d: Draft
-    if (req.edit) d = fromRecord(req.edit)
+    if (req.edit) d = fromRecord(req.edit, data)
     else if (req.duplicate) {
-      const src = fromRecord(req.duplicate)
-      d = { ...src, id: undefined, createdAt: undefined, date: today(), opDate: today(), installmentNo: null }
-      if (d.type === 'rent' && d.propertyId) d.period = suggestedRentPeriod(data, d.propertyId, thisMonth())
-      else d.period = thisMonth()
-      if (d.type === 'expense' && d.kind === 'installment' && d.planId) {
-        const st = planStatus(data.plans.find((p) => p.id === d.planId)!, data.expenses)
-        d.installmentNo = st.next?.no ?? null
-      }
+      d = repeatFrom(data, req.duplicate)
     } else {
       d = { ...blank(req.type ?? 'rent'), ...(req.preset as Partial<Draft>) }
       const active = data.properties.filter((p) => !p.archived)
@@ -226,7 +263,11 @@ function EntryForm({ req, onClose }: { req: EntryRequest; onClose: () => void })
   const errors: Partial<Record<keyof Draft, string>> = {}
   const req_ = t('form.required')
   if (!isDate(f.date)) errors.date = req_
-  if (f.type !== 'sale' && !(f.amount && f.amount > 0)) errors.amount = t('form.amountPositive')
+  const partsSum = round2((f.materials ?? 0) + (f.labor ?? 0) + (f.otherCosts ?? 0))
+  const isWork = f.type === 'expense' && f.kind === 'eventual'
+  if (f.type !== 'sale' && !(f.amount && f.amount > 0) && !(isWork && f.amount === null && partsSum > 0)) errors.amount = t('form.amountPositive')
+  if (isWork && f.amount && partsSum > f.amount + 0.004) errors.amount = t('work.partsExceed', { parts: formatMoney(partsSum, f.currency, i18n.language) })
+  if (f.type === 'rent' && (f.fee ?? 0) < 0) errors.fee = t('form.amountPositive')
   if ((f.type === 'rent' || f.type === 'expense') && !f.propertyId) errors.propertyId = req_
   if ((f.type === 'rent' || f.type === 'pension') && !isMonth(f.period)) errors.period = req_
   if (f.type === 'expense' && !f.concept.trim()) errors.concept = req_
@@ -264,6 +305,7 @@ function EntryForm({ req, onClose }: { req: EntryRequest; onClose: () => void })
     try {
       await persist(f, data)
       await rememberInList('methods', f.method)
+      if (isWork) await rememberInList('managers', f.managedBy)
       if (f.type === 'sale') await rememberInList('channels', f.channel)
       toast(isEdit ? t('form.updated') : t('form.saved'))
       onClose()
@@ -280,6 +322,8 @@ function EntryForm({ req, onClose }: { req: EntryRequest; onClose: () => void })
     { value: 'pension', label: t('entry.pension'), icon: <Landmark size={15} /> },
     { value: 'other', label: t('entry.other'), icon: <Gift size={15} /> },
   ]
+
+  const last = !isEdit ? lastRecordOf(data, f) : undefined
 
   const methodField = (
     <Field label={f.type === 'expense' ? t('form.payMethod') : t('form.method')} optional>
@@ -353,6 +397,19 @@ function EntryForm({ req, onClose }: { req: EntryRequest; onClose: () => void })
         }}
       >
         {!isEdit && <Chips options={typeOptions} value={f.type} onChange={switchType} label={t('entry.type')} />}
+        {last && (
+          <button
+            type="button"
+            onClick={() => setF(repeatFrom(data, last))}
+            className="flex w-full cursor-pointer items-center gap-2 rounded-xl border border-dashed border-ink-300 px-3 py-2 text-left text-sm text-ink-700 hover:bg-ink-100 dark:border-ink-700 dark:text-ink-200 dark:hover:bg-ink-800"
+          >
+            <History size={16} className="shrink-0 text-brand-600 dark:text-brand-400" />
+            <span className="min-w-0 flex-1">
+              <span className="font-medium">{t('entry.repeatLast')}</span>
+              <span className="block truncate text-xs text-ink-500">{describeRecord(data, last, i18n.language)}</span>
+            </span>
+          </button>
+        )}
 
         {f.type === 'rent' && (
           <>
@@ -367,6 +424,7 @@ function EntryForm({ req, onClose }: { req: EntryRequest; onClose: () => void })
               </Field>
             </div>
             {amountField(t('form.amountReceived'))}
+            <RentLiquidation f={f} set={set} data={data} err={err('fee')} />
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label={t('form.tenant')} optional>
                 <Input value={f.payer} onChange={(e) => set({ payer: e.target.value })} />
@@ -392,22 +450,28 @@ function EntryForm({ req, onClose }: { req: EntryRequest; onClose: () => void })
             {f.kind === 'fixed' && <FixedFields f={f} setF={setF} data={data} />}
             {f.kind === 'installment' && <InstallmentFields f={f} setF={setF} data={data} err={err('planId')} />}
             {f.kind === 'eventual' && <EventualFields f={f} set={set} data={data} prefs={prefs} />}
-            <Field label={t('form.datePaid')} error={err('date')}>
-              <Input type="date" value={f.date} onChange={(e) => set({ date: e.target.value })} />
-            </Field>
             {f.kind !== 'installment' && (
-              <Field label={t('form.concept')} error={err('concept')}>
+              <Field label={f.kind === 'eventual' ? t('work.description') : t('form.concept')} error={err('concept')}>
                 <Input value={f.concept} onChange={(e) => set({ concept: e.target.value })} />
               </Field>
             )}
-            {amountField(t('form.amountPaid'))}
+            {f.kind === 'eventual' ? (
+              <WorkFields f={f} set={set} data={data} prefs={prefs} err={err('amount')} partsSum={partsSum} />
+            ) : (
+              <>
+                <Field label={t('form.datePaid')} error={err('date')}>
+                  <Input type="date" value={f.date} onChange={(e) => set({ date: e.target.value })} />
+                </Field>
+                {amountField(t('form.amountPaid'))}
+              </>
+            )}
             {f.kind === 'fixed' && f.recurringId && (() => {
               const r = data.recurring.find((x) => x.id === f.recurringId)
               return r && f.amount && (f.amount !== r.amount || f.currency !== r.currency) ? (
                 <Toggle checked={f.updateUsual} onChange={(v) => set({ updateUsual: v })} label={t('form.updateUsual', { amount: formatMoney(r.amount, r.currency, i18n.language) })} />
               ) : null
             })()}
-            {methodField}
+            {f.kind !== 'eventual' && methodField}
           </>
         )}
 
@@ -711,9 +775,20 @@ async function persist(f: Draft, d: Data): Promise<void> {
         amount,
         currency: f.currency,
         method: f.method || undefined,
+        fee: f.type === 'rent' && f.fee ? round2(f.fee) : undefined,
         notes,
       }
-      await save('incomes', { ...stamp, ...row })
+      const op = putOp('incomes', { ...stamp, ...row })
+      const ops: Op[] = [op]
+      if (f.type === 'rent') {
+        // Link the works deducted in this liquidation; unlink the ones she unticked.
+        const want = new Set(f.deductionIds)
+        for (const e of d.expenses) {
+          if (want.has(e.id) && e.incomeId !== op.row.id) ops.push(putOp('expenses', { ...e, incomeId: op.row.id, deducted: true }))
+          else if (!want.has(e.id) && e.incomeId === op.row.id) ops.push(putOp('expenses', { ...e, incomeId: undefined }))
+        }
+      }
+      await apply(ops)
       return
     }
     case 'expense': {
@@ -731,6 +806,21 @@ async function persist(f: Draft, d: Data): Promise<void> {
         period: f.kind === 'fixed' ? f.period : f.kind === 'installment' ? f.period : undefined,
         planId: f.kind === 'installment' ? f.planId : undefined,
         installmentNo: f.kind === 'installment' ? (f.installmentNo ?? undefined) : undefined,
+      }
+      if (f.kind === 'eventual') {
+        const parts = (f.materials ?? 0) + (f.labor ?? 0) + (f.otherCosts ?? 0)
+        // Total wins; with no total, the parts are the total. Never both.
+        row.amount = round2(f.amount ?? parts)
+        Object.assign(row, {
+          workDate: f.workDate || undefined,
+          materials: f.materials ?? undefined,
+          labor: f.labor ?? undefined,
+          otherCosts: f.otherCosts ?? undefined,
+          managedBy: f.managedBy.trim() || undefined,
+          paidBy: f.paidBy === 'me' ? undefined : f.paidBy,
+          deducted: f.paidBy !== 'me' && f.deducted ? true : undefined,
+          incomeId: f.paidBy !== 'me' && f.deducted && f.incomeId ? f.incomeId : undefined,
+        })
       }
       const ops: Op[] = [putOp('expenses', { ...stamp, ...row })]
       const r = f.kind === 'fixed' && f.updateUsual ? d.recurring.find((x) => x.id === f.recurringId) : undefined
@@ -774,5 +864,201 @@ export function useEntryTypes() {
   return useMemo(
     () => ({ rent: t('entry.rent'), expense: t('entry.expense'), sale: t('entry.sale'), yield: t('entry.yield'), pension: t('entry.pension'), other: t('entry.other') }),
     [t],
+  )
+}
+
+/** A new draft that copies a previous record: today's date, next period/cuota. */
+function repeatFrom(d: Data, rec: EntryRecord): Draft {
+  const src = fromRecord(rec)
+  const out: Draft = { ...src, id: undefined, createdAt: undefined, date: today(), opDate: today(), installmentNo: null, deductionIds: [], incomeId: '' }
+  if (out.type === 'rent' && out.propertyId) {
+    out.period = suggestedRentPeriod(d, out.propertyId, thisMonth())
+    out.deductionIds = pendingDeductions(d, out.propertyId).map((e) => e.id)
+  } else out.period = thisMonth()
+  if (out.type === 'expense' && out.kind === 'installment' && out.planId) {
+    const plan = d.plans.find((p) => p.id === out.planId)
+    const st = plan ? planStatus(plan, d.expenses) : undefined
+    out.installmentNo = st?.next?.no ?? null
+    out.period = st?.next?.month ?? out.period
+  }
+  return out
+}
+
+/** The most recent record "like" the current draft (same type; same property/kind when chosen). */
+function lastRecordOf(d: Data, f: Draft): EntryRecord | undefined {
+  const newest = <T extends { date: string; createdAt: string }>(xs: T[]) => [...xs].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt))[0]
+  switch (f.type) {
+    case 'rent':
+    case 'pension':
+    case 'other': {
+      const row = newest(d.incomes.filter((i) => i.source === f.type && (f.type !== 'rent' || !f.propertyId || i.propertyId === f.propertyId)))
+      return row && { table: 'incomes', row }
+    }
+    case 'expense': {
+      const row = newest(d.expenses.filter((e) => e.kind === f.kind && (!f.propertyId || e.propertyId === f.propertyId) && (!f.recurringId || e.recurringId === f.recurringId)))
+      return row && { table: 'expenses', row }
+    }
+    case 'sale': {
+      const row = newest(d.sales)
+      return row && { table: 'sales', row }
+    }
+    case 'yield': {
+      const row = newest(d.yields.filter((y) => !f.investmentId || y.investmentId === f.investmentId))
+      return row && { table: 'yields', row }
+    }
+  }
+}
+
+function describeRecord(d: Data, r: EntryRecord, lang: string): string {
+  const prop = (id?: string) => d.properties.find((p) => p.id === id)?.name
+  const row = r.row
+  const amount = 'net' in row ? row.net : row.amount
+  const what =
+    r.table === 'incomes'
+      ? (prop(r.row.propertyId) ?? r.row.description ?? d.pensions.find((p) => p.id === (r.row as Income).pensionId)?.name)
+      : r.table === 'expenses'
+        ? `${r.row.concept} · ${prop(r.row.propertyId) ?? ''}`
+        : r.table === 'sales'
+          ? r.row.description
+          : d.investments.find((i) => i.id === (r.row as Yield).investmentId)?.name
+  return [what, formatMoney(amount, row.currency, lang), dateLabel(row.date, lang)].filter(Boolean).join(' · ')
+}
+
+/** Agency liquidation of a rent: fee withheld + works deducted. Gross is shown, never typed. */
+function RentLiquidation({ f, set, data, err }: { f: Draft; set: (p: Partial<Draft>) => void; data: Data; err?: string }) {
+  const { t, i18n } = useTranslation()
+  const [open, setOpen] = useState(false)
+  if (!f.propertyId) return null
+  // Pending ones for this property + whatever is already linked to this rent.
+  const candidates = data.expenses.filter((e) => (pendingDeductions(data, f.propertyId).includes(e) || (f.id && e.incomeId === f.id)))
+  const picked = candidates.filter((e) => f.deductionIds.includes(e.id))
+  const dedSum = picked.filter((e) => e.currency === f.currency).reduce((s, e) => s + e.amount, 0)
+  const gross = (f.amount ?? 0) + (f.fee ?? 0) + dedSum
+  const show = open || !!f.fee || candidates.length > 0
+  const fmt = (n: number, c: Currency = f.currency) => formatMoney(n, c, i18n.language)
+  if (!show)
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="-mt-2 cursor-pointer text-sm text-brand-700 hover:underline dark:text-brand-300">
+        + {t('rent.addLiquidation')}
+      </button>
+    )
+  return (
+    <div className="space-y-3 rounded-xl border border-ink-200 p-3 dark:border-ink-700">
+      <div className="text-sm font-semibold text-ink-700 dark:text-ink-200">{t('rent.liquidation')}</div>
+      <Field label={t('rent.fee')} error={err} hint={t('rent.feeHint')} optional>
+        <NumInput value={f.fee} onValue={(n) => set({ fee: n })} className="w-48" placeholder="0" />
+      </Field>
+      {candidates.length > 0 && (
+        <div>
+          <div className="mb-1 text-sm font-medium text-ink-700 dark:text-ink-300">{t('rent.deductions')}</div>
+          <ul className="space-y-1">
+            {candidates.map((e) => (
+              <li key={e.id}>
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-brand-600"
+                    checked={f.deductionIds.includes(e.id)}
+                    onChange={(ev) => set({ deductionIds: ev.target.checked ? [...f.deductionIds, e.id] : f.deductionIds.filter((x) => x !== e.id) })}
+                  />
+                  <span className="min-w-0 flex-1 truncate">
+                    {e.concept} <span className="text-ink-500">· {dateLabel(e.workDate || e.date, i18n.language)}</span>
+                  </span>
+                  <span className="tnum">{fmt(e.amount, e.currency)}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-ink-500">{t('rent.deductionsHint')}</p>
+        </div>
+      )}
+      <div className="rounded-lg bg-ink-100 px-3 py-2 text-sm dark:bg-ink-800">
+        {t('rent.grossLine', { gross: fmt(gross), net: fmt(f.amount ?? 0), fee: fmt(f.fee ?? 0), ded: fmt(dedSum) })}
+      </div>
+    </div>
+  )
+}
+
+/** Works: date, mixed breakdown, who managed/paid it, deducted from a rent or not. */
+function WorkFields({ f, set, data, prefs, err, partsSum }: { f: Draft; set: (p: Partial<Draft>) => void; data: Data; prefs: Prefs; err?: string; partsSum: number }) {
+  const { t, i18n } = useTranslation()
+  const fmt = (n: number) => formatMoney(n, f.currency, i18n.language)
+  const gap = f.amount !== null && partsSum > 0 ? round2(f.amount - partsSum) : 0
+  const rents = data.incomes
+    .filter((i) => i.source === 'rent' && i.propertyId === f.propertyId)
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 12)
+  const own = isOwnExpense({ paidBy: f.paidBy, deducted: f.deducted })
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label={t('work.date')} optional>
+          <Input type="date" value={f.workDate} onChange={(e) => set({ workDate: e.target.value })} />
+        </Field>
+        <Field label={t('form.datePaid')}>
+          <Input type="date" value={f.date} onChange={(e) => set({ date: e.target.value })} />
+        </Field>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Field label={t('work.materials')} optional>
+          <NumInput value={f.materials} onValue={(n) => set({ materials: n })} placeholder="—" />
+        </Field>
+        <Field label={t('work.labor')} optional>
+          <NumInput value={f.labor} onValue={(n) => set({ labor: n })} placeholder="—" />
+        </Field>
+        <Field label={t('work.other')} optional>
+          <NumInput value={f.otherCosts} onValue={(n) => set({ otherCosts: n })} placeholder="—" />
+        </Field>
+      </div>
+      <Field label={t('work.total')} error={err} hint={f.amount === null && partsSum > 0 ? t('work.totalFromParts', { total: fmt(partsSum) }) : gap > 0.004 ? t('work.unitemized', { amount: fmt(gap) }) : t('work.totalHint')}>
+        <div className="flex gap-2">
+          <NumInput value={f.amount} onValue={(n) => set({ amount: n })} className="flex-1" placeholder={partsSum > 0 ? fmt(partsSum) : '0'} />
+          <CurrencySelect value={f.currency} onChange={(c) => set({ currency: c })} />
+        </div>
+      </Field>
+      <Field label={t('work.managedBy')} optional>
+        <Input value={f.managedBy} onChange={(e) => set({ managedBy: e.target.value })} />
+      </Field>
+      {prefs.managers.length > 0 && (
+        <div className="-mt-2 flex flex-wrap gap-1.5">
+          {prefs.managers.map((m) => (
+            <button key={m} type="button" onClick={() => set({ managedBy: m })} className="cursor-pointer rounded-full bg-ink-100 px-2.5 py-1 text-xs hover:bg-ink-200 dark:bg-ink-800 dark:hover:bg-ink-700">
+              {m}
+            </button>
+          ))}
+        </div>
+      )}
+      <Field label={t('work.paidBy')}>
+        <Chips<PaidBy> size="sm" value={f.paidBy} onChange={(v) => set({ paidBy: v, deducted: v === 'agency' ? true : v === 'me' ? false : f.deducted })} options={PAID_BY.map((x) => ({ value: x, label: t(`work.by_${x}`) }))} />
+      </Field>
+      {f.paidBy !== 'me' && (
+        <>
+          <Toggle checked={f.deducted} onChange={(v) => set({ deducted: v })} label={t('work.deducted')} hint={t('work.deductedHint')} />
+          {f.deducted && rents.length > 0 && (
+            <Field label={t('work.fromRent')} hint={t('work.fromRentHint')} optional>
+              <Select value={f.incomeId} onChange={(e) => set({ incomeId: e.target.value })}>
+                <option value="">{t('work.notYet')}</option>
+                {rents.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {dateLabel(r.date, i18n.language)} · {formatMoney(r.amount, r.currency, i18n.language)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+          {!own && <Note>{t('work.notOwn')}</Note>}
+        </>
+      )}
+      {own && (
+        <Field label={t('form.payMethod')} optional>
+          <Select value={f.method} onChange={(e) => set({ method: e.target.value })}>
+            <option value="">—</option>
+            {uniq([...prefs.methods, f.method]).map((m) => (
+              <option key={m}>{m}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
+    </>
   )
 }

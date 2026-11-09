@@ -14,7 +14,7 @@ Where the spec (`00-requirements-es.md`) left room, this is what was decided and
 | **Storage behind a `Store` interface** (`src/lib/store/types.ts`) | Asked mid-build: a move to Firestore must not touch UI or calculations. Only `repo.ts` picks the backend. Contract: flat collections keyed by `id`, atomic batches (`apply`), whole-snapshot `subscribe`, `replaceAll` for restore. Reads happen before writes, so no read-in-transaction is needed (Firestore `writeBatch` fits). |
 | `HashRouter` + `base: './'` | GitHub Pages has no SPA fallback and serves under `/<repo>/`. Deep links and reloads work without a 404.html hack. |
 | DB name `haber-ingresos` | All of a user's GitHub Pages repos share one origin; the name must be unique. |
-| Name **"Haber"** | Short; in Spanish "haber" is both assets (debe/haber) and the pension *haber*. Rename freely: the name lives in `index.html`, `vite.config.ts` manifest, `App.tsx` brand, i18n `settings.aboutText`. |
+| ~~Name **"Haber"**~~ → visible name **"Nuestros ingresos"** since 2026-11-09 (see `04-functional-set-2.md`); code name stays Haber | Short; in Spanish "haber" is both assets (debe/haber) and the pension *haber*. Rename freely: the name lives in `index.html`, `vite.config.ts` manifest, `App.tsx` brand, i18n `settings.aboutText`. |
 
 ## Money and currencies (spec §13)
 

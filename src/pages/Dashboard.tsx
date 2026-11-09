@@ -1,4 +1,5 @@
-import { AlertCircle, Building2, CalendarClock, CheckCircle2, Landmark, PiggyBank, Receipt, Wallet } from 'lucide-react'
+import { AlertCircle, Building2, CalendarClock, CheckCircle2, Landmark, ListChecks, PiggyBank, Receipt, Scale, Wallet } from 'lucide-react'
+import { DueBanner, QuickMonth, payItem, useDue } from '../components/Due'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
@@ -13,14 +14,14 @@ import {
   filterFlows,
   monthlyTotals,
   pendingCuotas,
-  pendingRecurring,
+  currentStatus,
   rentsWithoutRecord,
   totals,
   upcomingMaturities,
   yearlyTotals,
   type Totals,
 } from '../lib/calc'
-import { dateLabel, monthLabel, thisMonth, today, yearMonths } from '../lib/dates'
+import { addDays, dateLabel, monthLabel, thisMonth, today, yearMonths } from '../lib/dates'
 import type { Lens } from '../lib/money'
 import type { Currency } from '../lib/types'
 
@@ -57,6 +58,7 @@ function DashboardBody({ model }: { model: Model }) {
         actions={<ViewSwitch model={model} />}
       />
 
+      {!empty && <DueBanner model={model} />}
       {empty && <Welcome />}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -93,16 +95,19 @@ function DashboardBody({ model }: { model: Model }) {
           lenses={lenses}
           get={(l) => per(l).income}
           to="/movimientos"
+          sub={t('explain.income')}
         />
-        {period && <Kpi label={t('dash.incomeYtd', { year })} icon={<Wallet size={14} />} lenses={lenses} get={(l) => ytd(l).income} />}
-        <Kpi label={t('dash.propExpenses')} icon={<Receipt size={14} />} lenses={lenses} get={(l) => per(l).expense} to="/gastos" />
+        {period && <Kpi label={t('dash.incomeYtd', { year })} icon={<Wallet size={14} />} lenses={lenses} get={(l) => ytd(l).income} sub={t('explain.incomeYtd')} />}
+        {!propertyId && <Kpi label={t('dash.rents')} icon={<Building2 size={14} />} color={C.rent} lenses={lenses} get={(l) => per(l).rent} sub={t('explain.rents')} />}
+        <Kpi label={t('dash.propExpenses')} icon={<Receipt size={14} />} lenses={lenses} get={(l) => per(l).expense} to="/gastos" sub={t('explain.propExpenses')} />
         <Kpi label={t('dash.realEstateNet')} icon={<Building2 size={14} />} lenses={lenses} get={(l) => per(l).realEstateNet} tone sub={t('dash.realEstateNetSub')} />
         {!propertyId && (
           <>
-            <Kpi label={t('dash.yields')} icon={<PiggyBank size={14} />} lenses={lenses} get={(l) => per(l).yield} to="/inversiones" />
-            <Kpi label={t('dash.otherIncome')} lenses={lenses} get={(l) => per(l).sale + per(l).other} sub={t('dash.otherIncomeSub')} />
-            <Kpi label={t('dash.capitalAvailable')} icon={<Landmark size={14} />} lenses={lenses} get={(l) => capitalNow(model, l, 'available')} sub={t('dash.today')} to="/patrimonio" />
-            <Kpi label={t('dash.capitalInvested')} icon={<PiggyBank size={14} />} lenses={lenses} get={(l) => capitalNow(model, l, 'placed')} sub={t('dash.today')} to="/inversiones" />
+            <Kpi label={t('dash.netResult')} icon={<Scale size={14} />} lenses={lenses} get={(l) => per(l).income - per(l).expense} tone sub={t('explain.netResult')} />
+            <Kpi label={t('dash.yields')} icon={<PiggyBank size={14} />} color={C.yield} lenses={lenses} get={(l) => per(l).yield} to="/inversiones" sub={t('explain.yields')} />
+            <Kpi label={t('dash.otherIncome')} lenses={lenses} get={(l) => per(l).sale + per(l).other + per(l).pension} sub={t('dash.otherIncomeSub')} />
+            <Kpi label={t('dash.capitalAvailable')} icon={<Landmark size={14} />} lenses={lenses} get={(l) => capitalNow(model, l, 'available')} sub={t('explain.capitalAvailable')} to="/patrimonio" />
+            <Kpi label={t('dash.capitalInvested')} icon={<PiggyBank size={14} />} lenses={lenses} get={(l) => capitalNow(model, l, 'placed')} sub={t('explain.capitalInvested')} to="/inversiones" />
           </>
         )}
       </div>
@@ -133,6 +138,7 @@ function DashboardBody({ model }: { model: Model }) {
             { key: 'fixed', label: t('kind.fixed'), color: C.fixed },
             { key: 'installment', label: t('kind.installment'), color: C.installment },
             { key: 'eventual', label: t('kind.eventual'), color: C.eventual },
+            { key: 'fee', label: t('kind.fee'), color: C.other },
           ]}
           total="expense"
         />
@@ -290,19 +296,27 @@ function Todo({ model }: { model: Model }) {
   const { t, i18n } = useTranslation()
   const { data } = model
   const m = thisMonth()
-  const fixed = pendingRecurring(data, m)
+  const due = useDue(model)
+  const [quick, setQuick] = useState(false)
+  // Urgent ones are in the banner above; here the rest of this month's unpaid services.
+  const fixed = due.filter((i) => i.urgency === 'later' && i.period === m)
   const cuotas = pendingCuotas(data, m)
-  const rents = rentsWithoutRecord(data, m)
+  const rents = rentsWithoutRecord(data, m).filter((p) => (currentStatus(data, p) ?? 'rented') === 'rented')
   const soon = upcomingMaturities(data).filter((i) => i.maturityDate! <= addDays(today(), 15))
   const items = fixed.length + cuotas.length + rents.length + soon.length
   const prop = (id: string) => data.properties.find((p) => p.id === id)?.name ?? ''
   if (data.properties.length === 0) return null
   return (
     <Card className="mb-4">
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <CalendarClock size={18} className="text-brand-600 dark:text-brand-400" />
         <h3 className="font-semibold">{t('todo.title', { month: monthLabel(m, i18n.language) })}</h3>
+        <Button size="sm" variant="primary" className="ml-auto" onClick={() => setQuick(true)}>
+          <ListChecks size={15} />
+          {t('quick.open')}
+        </Button>
       </div>
+      {quick && <QuickMonth model={model} onClose={() => setQuick(false)} />}
       {items === 0 ? (
         <p className="flex items-center gap-2 text-sm text-ink-500">
           <CheckCircle2 size={16} className="text-pos" />
@@ -326,20 +340,19 @@ function Todo({ model }: { model: Model }) {
               </Button>
             </li>
           ))}
-          {fixed.map((r) => (
-            <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+          {fixed.map((it) => (
+            <li key={it.key} className="flex flex-wrap items-center justify-between gap-2 py-2">
               <span>
-                {r.concept} · <span className="text-ink-500">{prop(r.propertyId)}</span> · <Amt value={r.amount} cur={r.currency} />
+                {it.rec.concept} · <span className="text-ink-500">{prop(it.rec.propertyId)}</span>
+                {it.bill?.amount ? (
+                  <>
+                    {' '}
+                    · <Amt value={it.bill.amount} cur={it.bill.currency} />
+                  </>
+                ) : null}
+                {it.dueDate && <span className="text-xs text-ink-500"> · {t('due.dueOn', { date: dateLabel(it.dueDate, i18n.language) })}</span>}
               </span>
-              <Button
-                size="sm"
-                onClick={() =>
-                  openEntry({
-                    type: 'expense',
-                    preset: { kind: 'fixed', propertyId: r.propertyId, recurringId: r.id, concept: r.concept, category: r.category ?? '', amount: r.amount, currency: r.currency, method: r.method ?? '', period: m },
-                  })
-                }
-              >
+              <Button size="sm" onClick={() => payItem(it)}>
                 {t('todo.pay')}
               </Button>
             </li>
@@ -383,12 +396,6 @@ function Todo({ model }: { model: Model }) {
       )}
     </Card>
   )
-}
-
-function addDays(date: string, n: number): string {
-  const d = new Date(date + 'T12:00:00')
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
 }
 
 function Welcome() {

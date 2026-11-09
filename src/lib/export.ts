@@ -1,9 +1,9 @@
 import type { TFunction } from 'i18next'
-import { capitalEvents, dataYears, monthlyTotals, planStatus, propertyYield, toFlows, type Data } from './calc'
+import { capitalEvents, currentStatus, dataYears, monthlyTotals, planStatus, propertyYield, rentBreakdown, toFlows, type Data } from './calc'
 import { monthRange, thisMonth, today } from './dates'
 import { makeLens, makeRateBook, type FxConfig } from './money'
 import { download } from './backup'
-import type { Currency } from './types'
+import { isOwnExpense, type Currency } from './types'
 
 type Cell = string | number | boolean | null | undefined
 export type Sheet = { name: string; rows: Record<string, Cell>[] }
@@ -71,6 +71,8 @@ export function buildSheets(d: Data, fx: FxConfig, t: TFunction): Sheet[] {
       [h('property')]: prop(i.propertyId),
       [h('tenant')]: i.payer,
       [h('amount')]: i.amount,
+      [h('fee')]: i.fee ?? '',
+      [h('gross')]: rentBreakdown(d, i.id)?.gross ?? i.amount,
       [h('currency')]: i.currency,
       [h('method')]: i.method,
       [h('notes')]: i.notes,
@@ -89,6 +91,13 @@ export function buildSheets(d: Data, fx: FxConfig, t: TFunction): Sheet[] {
       [h('amount')]: e.amount,
       [h('currency')]: e.currency,
       [h('method')]: e.method,
+      [h('workDate')]: e.workDate ?? '',
+      [h('materials')]: e.materials ?? '',
+      [h('labor')]: e.labor ?? '',
+      [h('otherCosts')]: e.otherCosts ?? '',
+      [h('managedBy')]: e.managedBy ?? '',
+      [h('paidBy')]: t(`work.by_${e.paidBy ?? 'me'}`),
+      [h('countsAsMine')]: isOwnExpense(e) ? t('common.yes') : t('common.no'),
       [h('notes')]: e.notes,
     })),
   })
@@ -98,12 +107,42 @@ export function buildSheets(d: Data, fx: FxConfig, t: TFunction): Sheet[] {
       [h('property')]: prop(r.propertyId),
       [h('concept')]: r.concept,
       [h('category')]: r.category,
+      [h('provider')]: r.provider ?? '',
+      [h('account')]: r.account ?? '',
+      [h('dueDay')]: r.dueDay ?? '',
+      [h('method')]: r.method ?? '',
+      [h('channel')]: r.channel ? t(`svc.ch_${r.channel}`) : '',
       [h('every')]: t(`fixed.every_${r.every}`),
       [h('since')]: r.startMonth,
       [h('usual')]: r.amount,
       [h('currency')]: r.currency,
       [h('active')]: r.active ? t('common.yes') : t('common.no'),
     })),
+  })
+  sheets.push({
+    name: h('sheetBills'),
+    rows: [...d.bills]
+      .sort((a, b) => a.period.localeCompare(b.period))
+      .map((b) => {
+        const r = d.recurring.find((x) => x.id === b.recurringId)
+        const paid = d.expenses.find((e) => e.recurringId === b.recurringId && (e.period ?? e.date.slice(0, 7)) === b.period)
+        return {
+          [h('property')]: prop(b.propertyId),
+          [h('concept')]: r?.concept ?? '',
+          [h('account')]: r?.account ?? '',
+          [h('period')]: b.period,
+          [h('received')]: b.receivedDate ?? '',
+          [h('due')]: b.dueDate ?? '',
+          [h('amount')]: b.amount ?? '',
+          [h('currency')]: b.currency,
+          [h('paidOn')]: paid?.date ?? '',
+          [h('notes')]: b.notes ?? '',
+        }
+      }),
+  })
+  sheets.push({
+    name: h('sheetStatus'),
+    rows: [...d.statusLog].sort((a, b) => a.from.localeCompare(b.from)).map((x) => ({ [h('property')]: prop(x.propertyId), [h('from')]: x.from, [h('status')]: t(`status.${x.status}`), [h('notes')]: x.notes ?? '' })),
   })
   sheets.push({
     name: h('sheetPlans'),
@@ -167,6 +206,13 @@ export function buildSheets(d: Data, fx: FxConfig, t: TFunction): Sheet[] {
       [h('address')]: p.address,
       [h('city')]: p.city,
       [h('province')]: p.province,
+      [h('postalCode')]: p.postalCode ?? '',
+      [h('cadastre')]: p.cadastre ?? '',
+      [h('parcel')]: p.parcel ?? '',
+      [h('currentStatus')]: (() => {
+        const st = currentStatus(d, p)
+        return st ? t(`status.${st}`) : ''
+      })(),
       [h('tenant')]: p.tenant,
       [h('contractStart')]: p.contractStart,
       [h('contractEnd')]: p.contractEnd,
@@ -249,8 +295,15 @@ export function buildSheets(d: Data, fx: FxConfig, t: TFunction): Sheet[] {
         [h('property')]: p.name,
         [h('currency')]: r.currency,
         [h('grossRent')]: Math.round(r.gross),
+        [h('fixedTotal')]: Math.round(r.fixed),
+        [h('installmentTotal')]: Math.round(r.installment),
+        [h('eventualTotal')]: Math.round(r.eventual),
+        [h('feeTotal')]: Math.round(r.fee),
         [h('expenseTotal')]: Math.round(r.expenses),
         [h('netRent')]: Math.round(r.net),
+        [h('monthsRented')]: r.monthsRented,
+        [h('monthsVacant')]: r.monthsVacant,
+        [h('vacancyCost')]: Math.round(r.vacancyCost),
         [h('value')]: r.value,
         [h('yieldPct')]: r.pct === null ? null : Math.round(r.pct * 100) / 100,
         [h('appreciation')]: r.appreciation,
