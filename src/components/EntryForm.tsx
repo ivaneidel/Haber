@@ -1,5 +1,6 @@
 import { Banknote, Building2, Gift, History, Landmark, PiggyBank, ShoppingBag, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import i18next from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { isDate, isMonth, monthOf, thisMonth, today } from '../lib/dates'
 import { pendingDeductions, planStatus, suggestedRentPeriod, type Data } from '../lib/calc'
@@ -444,8 +445,10 @@ function EntryForm({ req, onClose }: { req: EntryRequest; onClose: () => void })
                 { value: 'fixed', label: t('kind.fixed') },
                 { value: 'installment', label: t('kind.installment') },
                 { value: 'eventual', label: t('kind.eventual') },
+                { value: 'fee', label: t('kind.feeShort') },
               ]}
             />
+            {f.kind === 'fee' && <Note>{t('feeEntry.hint')}</Note>}
             {propertyField}
             {f.kind === 'fixed' && <FixedFields f={f} setF={setF} data={data} />}
             {f.kind === 'installment' && <InstallmentFields f={f} setF={setF} data={data} err={err('planId')} />}
@@ -614,6 +617,19 @@ function EntryForm({ req, onClose }: { req: EntryRequest; onClose: () => void })
 
 /** When switching to a kind, prefill from what's pending for that property. */
 function applyKindPreset(d: Data, f: Draft): Draft {
+  if (f.kind === 'fee') {
+    // Honorarios paid on their own: repeat the last one of this property (or any), else a plain concept.
+    const past = d.expenses.filter((e) => e.kind === 'fee').sort((a, b) => b.date.localeCompare(a.date))
+    const same = past.find((e) => e.propertyId === f.propertyId)
+    const last = same ?? past[0]
+    return {
+      ...f,
+      concept: f.concept || last?.concept || i18next.t('kind.fee'),
+      amount: same ? same.amount : f.amount,
+      currency: same ? same.currency : f.currency,
+      method: last?.method ?? f.method,
+    }
+  }
   if (!f.propertyId) return f
   if (f.kind === 'installment') {
     const plans = d.plans.filter((p) => p.propertyId === f.propertyId && !p.cancelled && !planStatus(p, d.expenses).done)
@@ -927,21 +943,13 @@ function describeRecord(d: Data, r: EntryRecord, lang: string): string {
 /** Agency liquidation of a rent: fee withheld + works deducted. Gross is shown, never typed. */
 function RentLiquidation({ f, set, data, err }: { f: Draft; set: (p: Partial<Draft>) => void; data: Data; err?: string }) {
   const { t, i18n } = useTranslation()
-  const [open, setOpen] = useState(false)
   if (!f.propertyId) return null
   // Pending ones for this property + whatever is already linked to this rent.
   const candidates = data.expenses.filter((e) => (pendingDeductions(data, f.propertyId).includes(e) || (f.id && e.incomeId === f.id)))
   const picked = candidates.filter((e) => f.deductionIds.includes(e.id))
   const dedSum = picked.filter((e) => e.currency === f.currency).reduce((s, e) => s + e.amount, 0)
   const gross = (f.amount ?? 0) + (f.fee ?? 0) + dedSum
-  const show = open || !!f.fee || candidates.length > 0
   const fmt = (n: number, c: Currency = f.currency) => formatMoney(n, c, i18n.language)
-  if (!show)
-    return (
-      <button type="button" onClick={() => setOpen(true)} className="-mt-2 cursor-pointer text-sm text-brand-700 hover:underline dark:text-brand-300">
-        + {t('rent.addLiquidation')}
-      </button>
-    )
   return (
     <div className="space-y-3 rounded-xl border border-ink-200 p-3 dark:border-ink-700">
       <div className="text-sm font-semibold text-ink-700 dark:text-ink-200">{t('rent.liquidation')}</div>

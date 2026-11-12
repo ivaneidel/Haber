@@ -69,8 +69,9 @@ export interface Income extends Base {
   notes?: string
 }
 
-export type ExpenseKind = 'fixed' | 'installment' | 'eventual'
-export const EXPENSE_KINDS: ExpenseKind[] = ['fixed', 'installment', 'eventual']
+/** `fee` = honorarios de administración paid on their own (not withheld from a rent). */
+export type ExpenseKind = 'fixed' | 'installment' | 'eventual' | 'fee'
+export const EXPENSE_KINDS: ExpenseKind[] = ['fixed', 'installment', 'eventual', 'fee']
 
 /** Money actually paid for a property. */
 export interface Expense extends Base {

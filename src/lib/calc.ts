@@ -1,4 +1,4 @@
-import { addDays, addMonths, daysBetween, daysInMonth, monthDiff, monthOf, monthRange, today as todayStr, yearOf } from './dates'
+import { addDays, addMonths, daysBetween, daysInMonth, monthDiff, monthOf, monthRange, thisMonth, today as todayStr, yearMonths, yearOf } from './dates'
 import type { Lens } from './money'
 import { isOwnExpense } from './types'
 import type {
@@ -68,8 +68,8 @@ export type FlowKind = 'rent' | 'pension' | 'other' | 'sale' | 'yield' | 'expens
 export const INCOME_KINDS = ['rent', 'yield', 'sale', 'pension', 'other'] as const
 export type IncomeKind = (typeof INCOME_KINDS)[number]
 
-/** `fee` = honorarios de administración withheld from a rent. */
-export type CostKind = ExpenseKind | 'fee'
+/** `fee` = honorarios de administración, withheld from a rent or paid on their own (same bucket). */
+export type CostKind = ExpenseKind
 
 export interface Flow {
   kind: FlowKind
@@ -206,6 +206,29 @@ export function monthlyTotals(flows: Flow[], lens: Lens, months: string[], byPer
   const buckets = new Map<string, Flow[]>(months.map((m) => [m, []]))
   for (const f of flows) buckets.get(flowMonth(f, byPeriod))?.push(f)
   return months.map((m) => ({ month: m, ...totals(buckets.get(m) ?? [], lens) }))
+}
+
+export interface MonthNetRow extends Totals {
+  month: string
+  /** Running real-estate net from January to this month. */
+  cumulative: number
+  /** After the current month: shown blank, not as zero. */
+  future: boolean
+}
+
+/**
+ * Month-by-month result of the properties alone: gross rent, each cost kind, net and running total.
+ * Only property flows count (pensions, yields, sales stay out). Sum of rows = the year's result.
+ */
+export function monthlyRealEstate(flows: Flow[], lens: Lens, year: number, byPeriod = false, now = thisMonth()): { rows: MonthNetRow[]; total: Totals } {
+  const mine = flows.filter((f) => f.propertyId && (f.kind === 'rent' || f.kind === 'expense'))
+  let cumulative = 0
+  const rows = monthlyTotals(mine, lens, yearMonths(year), byPeriod).map((m) => {
+    cumulative += m.realEstateNet
+    return { ...m, cumulative, future: m.month > now }
+  })
+  const total = totals(filterFlows(mine, { from: `${year}-01`, to: `${year}-12`, byPeriod }), lens)
+  return { rows, total }
 }
 
 export function yearlyTotals(flows: Flow[], lens: Lens, years: number[], byPeriod = false): (Totals & { year: number })[] {

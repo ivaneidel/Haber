@@ -1,6 +1,6 @@
 # STATUS
 
-_Last updated: 2026-11-09_
+_Last updated: 2026-11-12_
 
 Cold start: read `00-requirements-es.md` (scope), `01-decisions.md` (interpretations — overrides the spec where
 they differ), `02-architecture.md`, then `03-requirements-2-es.md` + `04-functional-set-2.md` (second spec and
@@ -39,6 +39,12 @@ Visible name: **Nuestros ingresos**. Code/repo/DB name: **Haber** (never rename 
 - Browser-checked with demo data (Easy Browser): banner, Gastos/Vencimientos, rent with fee + deduction linking,
   works breakdown validation, Carga del mes save, Local Centro vacancy, Rentabilidad. No console errors.
   Phone width only checked empty (390px layout OK).
+
+## Done — feedback 2026-11-12 (see `05-fees-and-monthly-net.md`)
+- Honorarios: rent fee box always visible + separate "Honorarios" expense kind (`'fee'`), new Gastos tab.
+- "Resultado de las propiedades mes a mes" table (Tablero + property page) and Excel sheet "Inmuebles mes a mes".
+- 45 tests (3 new in `fees.test.ts`). Browser-checked on demo data: table, fee entry saved and summed with
+  withheld fees in November, rent form fee box. She is testing it; wait for her feedback.
 
 ## Not done / next
 - Not deployed yet. `.github/workflows/deploy.yml` deploys to GitHub Pages on push to `main` (tests → build →

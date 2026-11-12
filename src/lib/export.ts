@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import { capitalEvents, currentStatus, dataYears, monthlyTotals, planStatus, propertyYield, rentBreakdown, toFlows, type Data } from './calc'
+import { capitalEvents, currentStatus, dataYears, monthlyRealEstate, monthlyTotals, planStatus, propertyYield, rentBreakdown, toFlows, type Data } from './calc'
 import { monthRange, thisMonth, today } from './dates'
 import { makeLens, makeRateBook, type FxConfig } from './money'
 import { download } from './backup'
@@ -276,11 +276,40 @@ export function buildSheets(d: Data, fx: FxConfig, t: TFunction): Sheet[] {
         [h('fixed')]: m.fixed,
         [h('installments')]: m.installment,
         [h('eventual')]: m.eventual,
+        [h('feeTotal')]: m.fee,
         [h('expenseTotal')]: m.expense,
         [h('realEstateNet')]: m.realEstateNet,
       })
     }
   }
+  // Properties month by month (all together, then each one), running total reset every January.
+  const reRows: Sheet['rows'] = []
+  const scopes: { name: string; flows: typeof flows }[] = [
+    { name: h('allProperties'), flows },
+    ...d.properties.map((p) => ({ name: p.name, flows: flows.filter((f) => f.propertyId === p.id) })),
+  ]
+  const years = [...new Set(months.map((m) => Number(m.slice(0, 4))))]
+  for (const sc of scopes)
+    for (const cur of ['ARS', 'USD'] as Currency[]) {
+      const lens = makeLens(cur, false, book, fx)
+      for (const y of years)
+        for (const m of monthlyRealEstate(sc.flows, lens, y).rows) {
+          if (m.future || (!m.rent && !m.expense)) continue
+          reRows.push({
+            [h('month')]: m.month,
+            [h('property')]: sc.name,
+            [h('currency')]: cur,
+            [h('rents')]: m.rent,
+            [h('fixed')]: m.fixed,
+            [h('installments')]: m.installment,
+            [h('eventual')]: m.eventual,
+            [h('feeTotal')]: m.fee,
+            [h('expenseTotal')]: m.expense,
+            [h('realEstateNet')]: m.realEstateNet,
+            [h('cumulative')]: m.cumulative,
+          })
+        }
+    }
   sheets.push({ name: h('sheetMonthly'), rows: summary.sort((a, b) => String(a[h('month')]).localeCompare(String(b[h('month')]))) })
 
   // Yearly yield per property, consolidated into the valuation's currency.
@@ -311,6 +340,7 @@ export function buildSheets(d: Data, fx: FxConfig, t: TFunction): Sheet[] {
       })
     }
   sheets.push({ name: h('sheetYield'), rows: yRows })
+  sheets.push({ name: h('sheetRealEstateMonthly'), rows: reRows })
   return sheets
 }
 

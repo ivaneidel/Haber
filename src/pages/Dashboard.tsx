@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom'
 import { Bars, C, ChartCard, Lines, useMoneyFmt, type Row, type SeriesDef } from '../components/Charts'
 import { openEntry } from '../components/entryStore'
 import { Amt, FxCaption, Kpi, Multi, ViewSwitch } from '../components/money'
+import { MonthlyNetTable } from '../components/MonthlyNet'
 import { Button, Card, PageHeader, Segmented, Select } from '../components/ui'
 import { useModel, type Model } from '../hooks/useData'
 import {
@@ -144,6 +145,8 @@ function DashboardBody({ model }: { model: Model }) {
         />
       </div>
 
+      <MonthlyNetTable flows={scoped} lenses={lenses} year={year} className="mt-4" />
+
       <ChartsBlock model={model} year={year} flows={scoped} years={years} propertyScoped={!!propertyId} />
     </>
   )
@@ -230,6 +233,7 @@ function ChartsBlock({ model, year, flows, years, propertyScoped }: { model: Mod
     { key: 'fixed', label: t('kind.fixed'), color: C.fixed },
     { key: 'installment', label: t('kind.installment'), color: C.installment },
     { key: 'eventual', label: t('kind.eventual'), color: C.eventual },
+    { key: 'fee', label: t('kind.fee'), color: C.other },
   ]
   const toRow = (x: Totals, label: string): Row => ({ label, ...(x as unknown as Record<string, number>) })
   // Months that haven't happened yet are blank, not zero.

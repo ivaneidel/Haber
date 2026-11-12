@@ -15,6 +15,7 @@ import { formatMoney, formatPct, type Lens } from '../lib/money'
 import { apply, deletePlan, deletePropertyHard, propertyRefs, putOp, remove } from '../lib/repo'
 import type { Currency, Plan, Property, PropertyStatus, Recurring, StatusChange, Valuation } from '../lib/types'
 import type { Model } from '../hooks/useData'
+import { MonthlyNetTable } from '../components/MonthlyNet'
 import { MovementList, movementRows } from './Movements'
 import { contractBadge } from './Properties'
 
@@ -52,12 +53,13 @@ export default function PropertyDetail() {
   const chartLens = lenses.length === 1 ? lenses[0] : lenses.find((l) => l.target === splitCur)!
   const f = { full: (n: number) => formatMoney(n, chartLens.target, i18n.language) }
   const mt = monthlyTotals(mine, chartLens, yearMonths(year), byPeriod)
-  const rows: Row[] = mt.map((m) => ({ label: monthLabel(m.month, i18n.language, 'short', false), rent: m.rent, fixed: -m.fixed, installment: -m.installment, eventual: -m.eventual, net: m.realEstateNet }))
+  const rows: Row[] = mt.map((m) => ({ label: monthLabel(m.month, i18n.language, 'short', false), rent: m.rent, fixed: -m.fixed, installment: -m.installment, eventual: -m.eventual, fee: -m.fee, net: m.realEstateNet }))
   const series: SeriesDef[] = [
     { key: 'rent', label: t('src.rent'), color: C.rent },
     { key: 'fixed', label: t('kind.fixed'), color: C.fixed },
     { key: 'installment', label: t('kind.installment'), color: C.installment },
     { key: 'eventual', label: t('kind.eventual'), color: C.eventual },
+    { key: 'fee', label: t('kind.fee'), color: C.other },
   ]
 
   const archive = async () => {
@@ -232,6 +234,7 @@ export default function PropertyDetail() {
         </ChartCard>
         <YearCompare model={model} propertyId={p.id} years={years} byPeriod={byPeriod} />
       </div>
+      <MonthlyNetTable flows={mine} lenses={lenses} year={year} byPeriod={byPeriod} className="mt-4" />
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
         <Card>

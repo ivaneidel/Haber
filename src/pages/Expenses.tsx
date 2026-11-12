@@ -16,7 +16,7 @@ import type { Currency, Plan, Recurring } from '../lib/types'
 import { MovementList, movementRows } from './Movements'
 import { PlanList, RecurringList } from './PropertyDetail'
 
-type Tab = 'fixed' | 'installment' | 'eventual'
+type Tab = 'fixed' | 'installment' | 'eventual' | 'fee'
 
 export default function Expenses() {
   const { t, i18n } = useTranslation()
@@ -147,6 +147,7 @@ export default function Expenses() {
             { value: 'fixed', label: t('exp.tabServices') },
             { value: 'installment', label: t('kind.installment') },
             { value: 'eventual', label: t('exp.tabWorks') },
+            { value: 'fee', label: t('kind.feeShort') },
           ]}
         />
       </div>
@@ -215,6 +216,29 @@ export default function Expenses() {
           </SectionTitle>
           <MovementList
             rows={movementRows(data, t).filter((r) => r.rec.table === 'expenses' && r.rec.row.kind === 'eventual' && (!propertyId || r.propertyId === propertyId))}
+          />
+        </Card>
+      )}
+
+      {tab === 'fee' && (
+        <Card>
+          <SectionTitle
+            action={
+              <Button size="sm" onClick={() => openEntry({ type: 'expense', preset: { kind: 'fee', ...(propertyId ? { propertyId } : {}) } })}>
+                <Plus size={14} />
+                {t('exp.newFee')}
+              </Button>
+            }
+          >
+            {t('kind.fee')}
+          </SectionTitle>
+          <p className="mb-2 text-xs text-ink-500">{t('exp.feeListHint')}</p>
+          <MovementList
+            rows={movementRows(data, t).filter(
+              (r) =>
+                (!propertyId || r.propertyId === propertyId) &&
+                ((r.rec.table === 'expenses' && r.rec.row.kind === 'fee') || (r.rec.table === 'incomes' && (r.rec.row.fee ?? 0) > 0)),
+            )}
           />
         </Card>
       )}
