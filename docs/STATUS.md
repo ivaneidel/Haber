@@ -47,7 +47,7 @@ Visible name: **Nuestros ingresos**. Code/repo/DB name: **Haber** (never rename 
   withheld fees in November, rent form fee box. She is testing it; wait for her feedback.
 
 ## Not done / next
-- Not deployed yet. `.github/workflows/deploy.yml` deploys to GitHub Pages on push to `main` (tests → build →
+- Live at https://ivaneidel.github.io/Haber/ (first confirmed deploy 2026-11-12). `.github/workflows/deploy.yml` deploys to GitHub Pages on push to `main` (tests → build →
   `deploy-pages`). One-time: repo Settings → Pages → Source: GitHub Actions. Works under any sub-path.
 - Not tried on a real phone or in Safari/Firefox desktop (month pickers are plain selects for that reason).
 - Main JS chunk ~315 KB gzipped (Recharts + app). Fine for a local app; lazy-load pages if it matters.
