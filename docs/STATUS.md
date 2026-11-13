@@ -1,6 +1,6 @@
 # STATUS
 
-_Last updated: 2026-11-12_
+_Last updated: 2026-11-13_
 
 Cold start: read `00-requirements-es.md` (scope), `01-decisions.md` (interpretations — overrides the spec where
 they differ), `02-architecture.md`, then `03-requirements-2-es.md` + `04-functional-set-2.md` (second spec and
@@ -45,6 +45,12 @@ Visible name: **Nuestros ingresos**. Code/repo/DB name: **Haber** (never rename 
 - "Resultado de las propiedades mes a mes" table (Tablero + property page) and Excel sheet "Inmuebles mes a mes".
 - 45 tests (3 new in `fees.test.ts`). Browser-checked on demo data: table, fee entry saved and summed with
   withheld fees in November, rent form fee box. She is testing it; wait for her feedback.
+
+## Done — auto cuotas 2026-11-13 (see `06-auto-installments.md`)
+- Installment plans post their cuotas by themselves on the charge day (default 1, per plan), catch-up on open,
+  idempotent ids, manual entry still works, deleted cuotas stay deleted. Existing plans are on by default.
+- 54 tests (9 new in `autoCuotas.test.ts`). Browser-checked on demo data: demo plan caught up Nov cuota, new plan
+  started in Aug posted 4 cuotas on day 10, deleted cuota stayed deleted and showed as payable. No console errors.
 
 ## Not done / next
 - Live at https://ivaneidel.github.io/Haber/ (first confirmed deploy 2026-11-12). `.github/workflows/deploy.yml` deploys to GitHub Pages on push to `main` (tests → build →

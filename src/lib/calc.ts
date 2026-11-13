@@ -403,13 +403,33 @@ export function planStatus(p: Plan, expenses: Expense[]): PlanStatus {
   }
 }
 
-/** Cuotas due up to `month` and still unpaid (overdue ones included). */
+/** Auto-post is on unless explicitly turned off (older plans have no flag). */
+export const isAuto = (p: Plan): boolean => p.auto !== false
+
+/** Date cuota `no` is charged: its month, on the plan's charge day (clamped to the month's length). */
+export function chargeDate(p: Plan, no: number): string {
+  const month = addMonths(p.startMonth, no - 1)
+  const day = Math.min(Math.max(1, p.chargeDay ?? 1), daysInMonth(month))
+  return `${month}-${String(day).padStart(2, '0')}`
+}
+
+/** How many cuotas have reached their charge date by `today` (0…count). */
+export function cuotasDueBy(p: Plan, today: string): number {
+  let n = 0
+  while (n < p.count && chargeDate(p, n + 1) <= today) n++
+  return n
+}
+
+/**
+ * Cuotas due up to `month` and still unpaid (overdue ones included). Auto plans' cuotas
+ * whose charge day hasn't come yet are left out: they will post themselves.
+ */
 export function pendingCuotas(d: Data, month: string): { plan: Plan; cuota: CuotaRow }[] {
   const out: { plan: Plan; cuota: CuotaRow }[] = []
   for (const p of d.plans) {
     if (p.cancelled) continue
     const st = planStatus(p, d.expenses)
-    for (const c of st.schedule) if (!c.paid && c.month <= month) out.push({ plan: p, cuota: c })
+    for (const c of st.schedule) if (!c.paid && c.month <= month && !(isAuto(p) && chargeDate(p, c.no) > todayStr())) out.push({ plan: p, cuota: c })
   }
   return out
 }

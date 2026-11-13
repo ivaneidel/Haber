@@ -5,6 +5,7 @@ import { capitalSummary, currentStatus, currentValuation, lastBill, lastPayment,
 import { formatMoney, round2 } from '../lib/money'
 import { rememberInList, type Prefs } from '../lib/prefs'
 import { apply, putOp, putRaw, save, saveProperty } from '../lib/repo'
+import { rebaseAutoMark } from '../lib/autoCuotas'
 import type { Op } from '../lib/store/types'
 import { rateId } from '../lib/fx'
 import { BILL_CHANNELS, PROPERTY_STATUSES } from '../lib/types'
@@ -393,6 +394,8 @@ export function PlanForm({ data, prefs, plan, propertyId, onClose }: { data: Dat
     method: plan?.method ?? 'Tarjeta de crédito',
     notes: plan?.notes ?? '',
     cancelled: plan?.cancelled ?? false,
+    auto: plan ? plan.auto !== false : true,
+    chargeDay: plan?.chargeDay ?? (1 as number | null),
   })
   const [alreadyPaid, setAlreadyPaid] = useState<number | null>(null)
   const set = (patch: Partial<typeof p>) => setP((x) => ({ ...x, ...patch }))
@@ -402,10 +405,11 @@ export function PlanForm({ data, prefs, plan, propertyId, onClose }: { data: Dat
     concept: p.concept.trim() ? undefined : t('form.required'),
     count: p.count && p.count >= 1 && Number.isInteger(p.count) && p.count >= paidCount ? undefined : t('plan.countInvalid'),
     installment: positive(p.installment) ? undefined : t('form.amountPositive'),
+    chargeDay: !p.auto || (p.chargeDay && p.chargeDay >= 1 && p.chargeDay <= 31 && Number.isInteger(p.chargeDay)) ? undefined : t('plan.chargeDayInvalid'),
     alreadyPaid: alreadyPaid && (alreadyPaid < 0 || alreadyPaid > (p.count ?? 0) || !Number.isInteger(alreadyPaid)) ? t('plan.countInvalid') : undefined,
   }
   const overdueHint =
-    !plan && p.startMonth < thisMonth()
+    !plan && !p.auto && p.startMonth < thisMonth()
       ? t('plan.pastStartHint', { n: Math.min(p.count ?? 0, (Number(thisMonth().slice(0, 4)) - Number(p.startMonth.slice(0, 4))) * 12 + Number(thisMonth().slice(5)) - Number(p.startMonth.slice(5))) })
       : undefined
   return (
@@ -426,11 +430,14 @@ export function PlanForm({ data, prefs, plan, propertyId, onClose }: { data: Dat
             installment: round2(p.installment!),
             method: p.method || undefined,
             notes: p.notes.trim() || undefined,
+            chargeDay: p.chargeDay ?? 1,
           })
+          // Schedule edited: only keep the auto-post mark for cuotas still due under the new schedule.
+          if (plan) planOp.row.autoPostedThrough = rebaseAutoMark(planOp.row, today())
           const id = planOp.row.id
           const ops: Op[] = [planOp]
           // Cuotas paid before she started using the app: one expense per cuota, in its own month.
-          if (!plan && alreadyPaid) {
+          if (!plan && !p.auto && alreadyPaid) {
             const day = Math.min(28, Number(today().slice(8)))
             for (let no = 1; no <= alreadyPaid; no++) {
               const m = addMonths(p.startMonth, no - 1)
@@ -488,7 +495,13 @@ export function PlanForm({ data, prefs, plan, propertyId, onClose }: { data: Dat
               <MonthInput value={p.startMonth} onChange={(m) => set({ startMonth: m })} />
             </Field>
           </div>
-          {!plan && (
+          <Toggle checked={p.auto} onChange={(v) => set({ auto: v })} label={t('plan.auto')} hint={t('plan.autoHint')} />
+          {p.auto && (
+            <Field label={t('plan.chargeDay')} error={err('chargeDay')} hint={!plan && p.startMonth < thisMonth() ? t('plan.autoPastHint') : t('plan.chargeDayHint')}>
+              <NumInput value={p.chargeDay} onValue={(n) => set({ chargeDay: n })} className="w-28" placeholder="1" />
+            </Field>
+          )}
+          {!plan && !p.auto && (
             <Field label={t('plan.alreadyPaid')} error={err('alreadyPaid')} hint={overdueHint ?? t('plan.alreadyPaidHint')} optional>
               <NumInput value={alreadyPaid} onValue={setAlreadyPaid} className="w-28" placeholder="0" />
             </Field>

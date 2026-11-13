@@ -182,6 +182,12 @@ export interface Plan extends Base {
   method?: string
   notes?: string
   cancelled?: boolean
+  /** Cuotas post themselves on their charge day (card debit). Undefined = on (older plans too). */
+  auto?: boolean
+  /** Day of the month each cuota is charged (1–31, clamped to the month). Default 1. */
+  chargeDay?: number | null
+  /** Highest cuota number the auto-post already handled; a cuota deleted after that stays deleted. */
+  autoPostedThrough?: number
 }
 
 /** Mercado Libre, Marketplace, private sales… */

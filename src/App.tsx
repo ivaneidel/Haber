@@ -14,18 +14,20 @@ import {
   Wrench,
   X,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import AutoUpdate from './components/AutoUpdate'
 import EntryHost from './components/EntryForm'
 import { openEntry } from './components/entryStore'
-import { ToastHost } from './components/toast'
+import { ToastHost, toast } from './components/toast'
 import { Button, IconButton } from './components/ui'
 import { useModel, useSetting, useSnapshot } from './hooks/useData'
 import { useDue } from './components/Due'
-import { urgentItems } from './lib/calc'
-import { requestPersistence, setSetting, wipeAll } from './lib/repo'
+import { emptyData, urgentItems } from './lib/calc'
+import { autoCuotaOps } from './lib/autoCuotas'
+import { today } from './lib/dates'
+import { apply, requestPersistence, setSetting, wipeAll } from './lib/repo'
 import { seedFirstRun } from './lib/seed'
 import { migratePrefs } from './lib/prefs'
 import Dashboard from './pages/Dashboard'
@@ -108,6 +110,27 @@ export default function App() {
       .finally(() => setReady(true))
     void requestPersistence()
   }, [])
+
+  // Auto cuotas: whenever data changes (new plan, restore, demo) or the app comes back into view
+  // (it may have stayed open into a new day), record the cuotas whose charge day has arrived.
+  const [wake, setWake] = useState(0)
+  const posting = useRef(false)
+  useEffect(() => {
+    const onVis = () => document.visibilityState === 'visible' && setWake((n) => n + 1)
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [])
+  useEffect(() => {
+    if (!ready || !snap || posting.current) return
+    const ops = autoCuotaOps({ ...emptyData(), plans: snap.plans, expenses: snap.expenses }, today())
+    if (!ops.length) return
+    posting.current = true
+    const n = ops.filter((o) => o.op === 'put' && o.table === 'expenses').length
+    apply(ops)
+      .then(() => n && toast(t('plan.autoPosted', { count: n })))
+      .catch((e) => console.error('auto cuotas failed', e))
+      .finally(() => (posting.current = false))
+  }, [ready, snap, wake, t])
 
   useEffect(() => {
     window.scrollTo(0, 0)

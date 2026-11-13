@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, ArrowLeft, ExternalLink, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, CalendarClock, ExternalLink, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -9,7 +9,7 @@ import { Amt, FxCaption, Kpi, Multi, ViewSwitch } from '../components/money'
 import { toast } from '../components/toast'
 import { Badge, Button, Card, Empty, IconButton, PageHeader, SectionTitle, Segmented, Select, Table, confirmAction, td, tdNum, th, thNum } from '../components/ui'
 import { useModel } from '../hooks/useData'
-import { currentStatus, dataYears, filterFlows, monthlyTotals, pendingDeductions, planStatus, propertyYield, statusHistory, totals, vacancyPeriods, valuationsOf, yearlyTotals, type Flow } from '../lib/calc'
+import { chargeDate, currentStatus, isAuto, dataYears, filterFlows, monthlyTotals, pendingDeductions, planStatus, propertyYield, statusHistory, totals, vacancyPeriods, valuationsOf, yearlyTotals, type Flow } from '../lib/calc'
 import { dateLabel, monthLabel, today, yearMonths } from '../lib/dates'
 import { formatMoney, formatPct, type Lens } from '../lib/money'
 import { apply, deletePlan, deletePropertyHard, propertyRefs, putOp, remove } from '../lib/repo'
@@ -413,7 +413,12 @@ export function PlanList({ plans, onEdit, showProperty }: { plans: Plan[]; onEdi
             <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-ink-100 dark:bg-ink-800">
               <div className="h-full rounded-full" style={{ width: `${pct}%`, background: C.installment }} />
             </div>
-            {st.next && (
+            {st.next && isAuto(p) && chargeDate(p, st.next.no) > today() ? (
+              <div className="mt-2 flex items-center gap-1.5 text-xs text-ink-500">
+                <CalendarClock size={14} />
+                {t('plan.autoBadge', { day: Math.min(p.chargeDay ?? 1, 31) })}
+              </div>
+            ) : st.next && (
               <Button
                 size="sm"
                 className="mt-2"
